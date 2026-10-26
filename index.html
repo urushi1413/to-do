@@ -32,11 +32,24 @@
   .day.none .fill { background:var(--line); }
   .day small { font-size:11px; color:var(--muted); margin-top:4px; }
   .day.current small { color:var(--fg); font-weight:bold; }
+  .strip { position:relative; display:flex; gap:6px; overflow-x:auto; padding-bottom:8px; margin-bottom:12px; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  .strip::-webkit-scrollbar { display:none; }
+  .chip { flex:0 0 48px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:6px 0; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--fg); }
+  .chip small { font-size:11px; color:var(--muted); }
+  .chip b { font-size:16px; }
+  .chip i { width:6px; height:6px; border-radius:50%; background:transparent; }
+  .chip i.some { background:#f0b429; }
+  .chip i.full { background:var(--accent); }
+  .chip.today { border-color:var(--accent); }
+  .chip.selected { background:var(--accent); border-color:var(--accent); }
+  .chip.selected small, .chip.selected b { color:#fff; }
+  .chip.selected i.some, .chip.selected i.full { background:#fff; }
 </style>
 </head>
 <body>
 <main>
   <section>
+    <div class="strip" id="strip"></div>
     <div class="nav">
       <button id="prev">←</button>
       <strong id="date"></strong>
@@ -95,7 +108,48 @@
     return Math.round(tasks.filter(t => t.done).length / tasks.length * 100);
   }
 
+  // 今日の前後を基本の範囲にし、表示中の日付がはみ出したらそこまで広げる
+  const STRIP_PAST = 60, STRIP_FUTURE = 14;
+  let stripScrolledKey = null;
+
+  function renderStrip() {
+    const strip = document.getElementById('strip');
+    const today = new Date();
+    const todayKey = toKey(today);
+    const currentKey = toKey(current);
+    const start = addDays(today, -STRIP_PAST) < current ? addDays(today, -STRIP_PAST) : addDays(current, -3);
+    const end = addDays(today, STRIP_FUTURE) > current ? addDays(today, STRIP_FUTURE) : addDays(current, 3);
+
+    // 作り直すと横位置が戻るので、日付が変わっていなければ元の位置に戻す
+    const keepLeft = strip.scrollLeft;
+    strip.innerHTML = '';
+    let selected = null;
+    for (let d = new Date(start); toKey(d) <= toKey(end); d = addDays(d, 1)) {
+      const key = toKey(d);
+      const r = rateOf(key);
+      const chip = document.createElement('button');
+      chip.className = 'chip' + (key === todayKey ? ' today' : '') + (key === currentKey ? ' selected' : '');
+      chip.innerHTML =
+        `<small>${'日月火水木金土'[d.getDay()]}</small>` +
+        `<b>${d.getDate()}</b>` +
+        `<i class="${r === null ? '' : r === 100 ? 'full' : 'some'}"></i>`;
+      const date = new Date(d);
+      chip.onclick = () => { current = date; render(); };
+      strip.append(chip);
+      if (key === currentKey) selected = chip;
+    }
+
+    if (stripScrolledKey === currentKey) {
+      strip.scrollLeft = keepLeft;
+    } else {
+      // scrollIntoView はページごと縦に動くため、帯の中だけで中央に寄せる
+      strip.scrollLeft = selected.offsetLeft - (strip.clientWidth - selected.offsetWidth) / 2;
+      stripScrolledKey = currentKey;
+    }
+  }
+
   function render() {
+    renderStrip();
     const key = toKey(current);
     const isToday = key === toKey(new Date());
     document.getElementById('date').textContent =
