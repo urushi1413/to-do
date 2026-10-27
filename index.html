@@ -25,7 +25,11 @@
   li label { flex:1; display:flex; align-items:center; gap:8px; }
   li.done span { text-decoration:line-through; color:var(--muted); }
   li .tag { font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:0 4px; margin-left:4px; }
-  .repeat { display:flex; align-items:center; gap:4px; font-size:14px; white-space:nowrap; }
+  #repeatInput { font:inherit; padding:0 4px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  .weekdays { display:flex; gap:4px; margin:-4px 0 12px; }
+  .weekdays[hidden] { display:none; }
+  .weekdays button { flex:1; padding:6px 0; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  .weekdays button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
   li .del { border:none; background:none; color:var(--muted); font-size:18px; }
   .empty { color:var(--muted); text-align:center; padding:16px 0; }
   .week { display:flex; align-items:flex-end; justify-content:space-between; height:140px; gap:6px; }
@@ -65,9 +69,14 @@
   <section>
     <form id="addForm">
       <input id="taskInput" placeholder="やることを追加" autocomplete="off">
-      <label class="repeat"><input type="checkbox" id="repeatInput">毎日</label>
+      <select id="repeatInput">
+        <option value="once">1回</option>
+        <option value="daily">毎日</option>
+        <option value="weekly">毎週</option>
+      </select>
       <button type="submit">追加</button>
     </form>
+    <div class="weekdays" id="weekdays" hidden></div>
     <ul id="list"></ul>
   </section>
 
@@ -110,13 +119,23 @@
 
   // data: { "2026-10-26": [{ id, text, done }, ...], ... }
   const data = load();
-  // repeats: [{ id, text, from, until, done: { "2026-10-26": true } }, ...]
-  // from 以降・until より前の日に毎日出る。やめても until で止めるだけなので過去の記録は残る
+  // repeats: [{ id, text, from, until, days, done: { "2026-10-26": true } }, ...]
+  // from 以降・until より前の日に出る。days（0=日〜6=土）があればその曜日だけ、無ければ毎日。
+  // やめても until で止めるだけなので過去の記録は残る
   const repeats = loadRepeats();
   let current = new Date();
 
+  const WEEKDAYS = '日月火水木金土';
+  function weekdayOf(key) {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(y, m - 1, d).getDay();
+  }
+  function repeatLabel(r) {
+    return r.days ? '毎週 ' + r.days.map(d => WEEKDAYS[d]).join('・') : '毎日';
+  }
   function repeatsOf(key) {
-    return repeats.filter(r => r.from <= key && (!r.until || key < r.until));
+    const wd = weekdayOf(key);
+    return repeats.filter(r => r.from <= key && (!r.until || key < r.until) && (!r.days || r.days.includes(wd)));
   }
   function tasksOf(key) {
     const daily = repeatsOf(key).map(r => ({ id: r.id, text: r.text, done: !!r.done[key], repeat: r }));
@@ -209,7 +228,7 @@
       if (task.repeat) {
         const tag = document.createElement('small');
         tag.className = 'tag';
-        tag.textContent = '毎日';
+        tag.textContent = repeatLabel(task.repeat);
         label.append(tag);
       }
       const del = document.createElement('button');
@@ -255,16 +274,43 @@
     if (!text) return;
     const key = toKey(current);
     const repeatInput = document.getElementById('repeatInput');
-    if (repeatInput.checked) {
-      repeats.push({ id: Date.now(), text, from: key, until: null, done: {} });
+    if (repeatInput.value !== 'once') {
+      const days = repeatInput.value === 'weekly'
+        ? (weekDays.size ? [...weekDays].sort((a, b) => (a + 6) % 7 - (b + 6) % 7) : [current.getDay()])
+        : null;
+      repeats.push({ id: Date.now(), text, from: key, until: null, days, done: {} });
       saveRepeats();
     } else {
       data[key] = [...(data[key] || []), { id: Date.now(), text, done: false }];
       save();
     }
     input.value = '';
-    repeatInput.checked = false;
+    repeatInput.value = 'once';
+    renderWeekdays();
     render();
+  };
+
+  // 「毎週」を選んだときだけ曜日を選ばせる。最初は表示中の日の曜日だけ選んだ状態にする
+  let weekDays = new Set();
+  function renderWeekdays() {
+    const box = document.getElementById('weekdays');
+    box.hidden = document.getElementById('repeatInput').value !== 'weekly';
+    box.innerHTML = '';
+    [1, 2, 3, 4, 5, 6, 0].forEach(d => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = WEEKDAYS[d];
+      b.className = weekDays.has(d) ? 'on' : '';
+      b.onclick = () => {
+        weekDays.has(d) ? weekDays.delete(d) : weekDays.add(d);
+        renderWeekdays();
+      };
+      box.append(b);
+    });
+  }
+  document.getElementById('repeatInput').onchange = () => {
+    weekDays = new Set([current.getDay()]);
+    renderWeekdays();
   };
   document.getElementById('prev').onclick = () => { current = addDays(current, -1); render(); };
   document.getElementById('next').onclick = () => { current = addDays(current, 1); render(); };
