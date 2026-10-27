@@ -24,7 +24,7 @@
   li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
   li label { flex:1; display:flex; align-items:center; gap:8px; }
   li.done span { text-decoration:line-through; color:var(--muted); }
-  li .tag { font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:0 4px; margin-left:4px; }
+  .tag { font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:0 4px; margin-left:4px; }
   #repeatInput { font:inherit; padding:0 4px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
   .weekdays { display:flex; gap:4px; margin:-4px 0 12px; }
   .weekdays[hidden] { display:none; }
@@ -51,10 +51,34 @@
   .chip.selected { background:var(--accent); border-color:var(--accent); }
   .chip.selected small, .chip.selected b { color:#fff; }
   .chip.selected i.some, .chip.selected i.full { background:#fff; }
+  .tabs, .seg { display:flex; gap:4px; padding:4px; margin-bottom:16px; background:var(--line); border-radius:8px; }
+  .tabs button, .seg button { flex:1; padding:8px 0; border:none; border-radius:6px; background:none; color:var(--fg); }
+  .tabs button.on, .seg button.on { background:var(--card); font-weight:bold; box-shadow:0 1px 2px rgba(0,0,0,.1); }
+  .seg { margin-bottom:12px; }
+  [hidden] { display:none !important; }
+  .tiles { display:flex; gap:8px; }
+  .tile { flex:1; text-align:center; }
+  .tile b { display:block; font-size:24px; }
+  .tile small { font-size:11px; color:var(--muted); }
+  .bars { display:flex; align-items:flex-end; height:100px; gap:2px; }
+  .bars div { flex:1; background:var(--accent); border-radius:2px 2px 0 0; min-height:2px; }
+  .bars div.none { background:var(--line); }
+  .bars-axis { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px; }
+  .habit { padding:10px 0; border-bottom:1px solid var(--line); }
+  .habit:last-child { border-bottom:none; }
+  .habit-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; }
+  .habit-head b { font-size:18px; }
+  .habit small { font-size:12px; color:var(--muted); }
 </style>
 </head>
 <body>
 <main>
+  <div class="tabs" id="tabs">
+    <button data-tab="today" class="on">チェック</button>
+    <button data-tab="stats">統計</button>
+  </div>
+
+  <div id="todayView">
   <section>
     <div class="strip" id="strip"></div>
     <div class="nav">
@@ -84,6 +108,31 @@
     <h2>過去7日の達成率</h2>
     <div class="week" id="week"></div>
   </section>
+  </div>
+
+  <div id="statsView" hidden>
+    <div class="seg" id="period">
+      <button data-days="7" class="on">7日</button>
+      <button data-days="30">30日</button>
+      <button data-days="all">全期間</button>
+    </div>
+    <section>
+      <div class="tiles">
+        <div class="tile"><b id="statAvg"></b><small>平均達成率</small></div>
+        <div class="tile"><b id="statDone"></b><small>完了したタスク</small></div>
+        <div class="tile"><b id="statFull"></b><small>100% の日</small></div>
+      </div>
+    </section>
+    <section>
+      <h2>日ごとの達成率</h2>
+      <div class="bars" id="statBars"></div>
+      <div class="bars-axis"><span id="statFrom"></span><span>今日</span></div>
+    </section>
+    <section>
+      <h2>繰り返しタスク別</h2>
+      <div id="statHabits"></div>
+    </section>
+  </div>
 </main>
 
 <script>
@@ -314,6 +363,118 @@
   };
   document.getElementById('prev').onclick = () => { current = addDays(current, -1); render(); };
   document.getElementById('next').onclick = () => { current = addDays(current, 1); render(); };
+
+  // ---- 統計 ----
+  // 集計は表示中の日付ではなく「今日まで」で区切る。未来の日はまだ終わっていないので数えない
+  let period = '7';
+
+  function statsRange() {
+    const today = new Date();
+    if (period !== 'all') return { start: addDays(today, -(Number(period) - 1)), end: today };
+    const keys = [...Object.keys(data), ...repeats.map(r => r.from)].filter(k => k <= toKey(today)).sort();
+    const [y, m, d] = (keys[0] || toKey(today)).split('-').map(Number);
+    return { start: new Date(y, m - 1, d), end: today };
+  }
+
+  // その繰り返しタスクが key の日に予定されていたか
+  function scheduled(r, key) {
+    return r.from <= key && (!r.until || key < r.until) && (!r.days || r.days.includes(weekdayOf(key)));
+  }
+
+  // 今日から遡って何日連続で達成しているか。今日がまだ未チェックなら昨日から数える
+  function streakOf(r) {
+    let count = 0;
+    let d = new Date();
+    if (scheduled(r, toKey(d)) && !r.done[toKey(d)]) d = addDays(d, -1);
+    for (; toKey(d) >= r.from; d = addDays(d, -1)) {
+      const key = toKey(d);
+      if (!scheduled(r, key)) continue;
+      if (!r.done[key]) break;
+      count++;
+    }
+    return count;
+  }
+
+  function renderStats() {
+    const { start, end } = statsRange();
+    const days = [];
+    for (let d = new Date(start); toKey(d) <= toKey(end); d = addDays(d, 1)) days.push(toKey(d));
+
+    let doneCount = 0, totalCount = 0, fullDays = 0, rateSum = 0, ratedDays = 0;
+    const bars = document.getElementById('statBars');
+    bars.innerHTML = '';
+    for (const key of days) {
+      const tasks = tasksOf(key);
+      doneCount += tasks.filter(t => t.done).length;
+      totalCount += tasks.length;
+      const r = rateOf(key);
+      if (r !== null) { rateSum += r; ratedDays++; }
+      if (r === 100) fullDays++;
+      const bar = document.createElement('div');
+      bar.className = r === null ? 'none' : '';
+      bar.style.height = `${r || 0}%`;
+      bar.title = `${key} ${r === null ? '記録なし' : r + '%'}`;
+      bars.append(bar);
+    }
+    document.getElementById('statAvg').textContent = ratedDays ? `${Math.round(rateSum / ratedDays)}%` : '-';
+    document.getElementById('statDone').textContent = `${doneCount}/${totalCount}`;
+    document.getElementById('statFull').textContent = `${fullDays}日`;
+    document.getElementById('statFrom').textContent = `${start.getMonth() + 1}/${start.getDate()}`;
+
+    const box = document.getElementById('statHabits');
+    box.innerHTML = '';
+    const rows = repeats
+      .map(r => {
+        const planned = days.filter(key => scheduled(r, key));
+        const done = planned.filter(key => r.done[key]).length;
+        return { r, planned: planned.length, done, rate: planned.length ? Math.round(done / planned.length * 100) : 0 };
+      })
+      .filter(x => x.planned > 0)
+      .sort((a, b) => b.rate - a.rate);
+    if (rows.length === 0) {
+      box.innerHTML = '<div class="empty">この期間の繰り返しタスクはありません</div>';
+    }
+    for (const { r, planned, done, rate } of rows) {
+      const row = document.createElement('div');
+      row.className = 'habit';
+      const head = document.createElement('div');
+      head.className = 'habit-head';
+      const name = document.createElement('span');
+      name.textContent = r.text;
+      const tag = document.createElement('small');
+      tag.className = 'tag';
+      tag.textContent = repeatLabel(r) + (r.until ? '（終了）' : '');
+      name.append(' ', tag);
+      const pct = document.createElement('b');
+      pct.textContent = `${rate}%`;
+      head.append(name, pct);
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.innerHTML = `<div style="width:${rate}%"></div>`;
+      const note = document.createElement('small');
+      const streak = r.until ? 0 : streakOf(r);
+      note.textContent = `${done}/${planned}回` + (streak ? ` ・ ${streak}回連続` : '');
+      row.append(head, bar, note);
+      box.append(row);
+    }
+  }
+
+  document.querySelectorAll('#tabs button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
+      const stats = b.dataset.tab === 'stats';
+      document.getElementById('todayView').hidden = stats;
+      document.getElementById('statsView').hidden = !stats;
+      if (stats) renderStats();
+    };
+  });
+  document.querySelectorAll('#period button').forEach(b => {
+    b.onclick = () => {
+      document.querySelectorAll('#period button').forEach(x => x.classList.toggle('on', x === b));
+      period = b.dataset.days;
+      renderStats();
+    };
+  });
 
   render();
 </script>
