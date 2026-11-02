@@ -208,12 +208,9 @@
     </section>
 
     <section>
-      <div class="nav">
-        <button id="monthPrev">←</button>
-        <strong id="monthLabel"></strong>
-        <button id="monthNext">→</button>
-      </div>
-      <form class="row-form" id="noteForm" style="margin-top:12px">
+      <h2 id="monthLabel" style="color:var(--fg); font-size:18px; font-weight:bold; text-align:center"></h2>
+      <div class="strip" id="monthStrip"></div>
+      <form class="row-form" id="noteForm">
         <input id="noteInput" placeholder="この月のできごと" autocomplete="off">
         <button type="submit">追加</button>
       </form>
@@ -707,6 +704,7 @@
     // 月の記録：手で書いたメモに、その月に達成した人生リストの項目を自動で足す
     const month = monthKeyOf(recordMonth);
     document.getElementById('monthLabel').textContent = `${recordMonth.getFullYear()}年${recordMonth.getMonth() + 1}月`;
+    renderMonthStrip();
     // 日付はその月の中でだけ選べる。今月なら今日、過去の月ならその月の最終日を最初に入れておく
     const dateInput = document.getElementById('noteDate');
     const first = `${month}-01`;
@@ -766,8 +764,43 @@
     input.value = '';
     renderRecord();
   };
-  document.getElementById('monthPrev').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() - 1); renderRecord(); };
-  document.getElementById('monthNext').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() + 1); renderRecord(); };
+
+  // 月を横一列に並べて、指で流してタップで選ぶ。過去12か月か、一番古い記録の月の古いほうから今月まで
+  let monthStripScrolled = null;
+  function renderMonthStrip() {
+    const strip = document.getElementById('monthStrip');
+    const nowMonth = appNow();
+    nowMonth.setDate(1);
+    const oldest = [...Object.keys(data), ...repeats.map(r => r.from), ...notes.map(n => n.date), ...life.filter(x => x.doneOn).map(x => x.doneOn)]
+      .sort()[0];
+    let start = new Date(nowMonth.getFullYear(), nowMonth.getMonth() - 11, 1);
+    if (oldest && oldest.slice(0, 7) < monthKeyOf(start)) {
+      const [y, m] = oldest.split('-').map(Number);
+      start = new Date(y, m - 1, 1);
+    }
+    const marked = new Set([...notes.map(n => n.month), ...life.filter(x => x.doneOn).map(x => x.doneOn.slice(0, 7))]);
+    const selectedKey = monthKeyOf(recordMonth);
+
+    const keepLeft = strip.scrollLeft;
+    strip.innerHTML = '';
+    let selected = null;
+    for (let d = start; monthKeyOf(d) <= monthKeyOf(nowMonth); d = new Date(d.getFullYear(), d.getMonth() + 1, 1)) {
+      const key = monthKeyOf(d);
+      const chip = document.createElement('button');
+      chip.className = 'chip' + (key === monthKeyOf(nowMonth) ? ' today' : '') + (key === selectedKey ? ' selected' : '');
+      chip.innerHTML = `<small>${d.getFullYear()}</small><b>${d.getMonth() + 1}月</b><i class="${marked.has(key) ? 'full' : ''}"></i>`;
+      const month = new Date(d);
+      chip.onclick = () => { recordMonth = month; renderRecord(); };
+      strip.append(chip);
+      if (key === selectedKey) selected = chip;
+    }
+    if (monthStripScrolled === selectedKey) {
+      strip.scrollLeft = keepLeft;
+    } else if (selected) {
+      strip.scrollLeft = selected.offsetLeft - (strip.clientWidth - selected.offsetWidth) / 2;
+      monthStripScrolled = selectedKey;
+    }
+  }
 
   // ---- バックアップ ----
   function loadBackupState() {
