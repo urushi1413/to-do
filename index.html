@@ -90,6 +90,16 @@
   .banner { background:#fff8e1; border:1px solid #f0b429; border-radius:8px; padding:12px; margin-bottom:16px; font-size:14px; }
   .banner div { display:flex; gap:8px; margin-top:8px; }
   .banner button { flex:1; padding:6px 0; }
+  .badges { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
+  .badge { text-align:center; padding:10px 4px; border:1px solid var(--line); border-radius:8px; }
+  .badge .icon { font-size:28px; line-height:1.2; }
+  .badge b { display:block; font-size:12px; margin-top:4px; }
+  .badge small { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
+  .badge.locked .icon { filter:grayscale(1); opacity:.35; }
+  .badge.locked b { color:var(--muted); }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translate(-50%, 20px); width:max-content; max-width:90vw; background:#222; color:#fff; padding:10px 16px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .2s, transform .2s; pointer-events:none; z-index:10; }
+  .toast.show { opacity:1; transform:translate(-50%, 0); }
+  #confetti { position:fixed; inset:0; pointer-events:none; z-index:9; }
 </style>
 </head>
 <body>
@@ -162,6 +172,10 @@
       <h2>繰り返しタスク別</h2>
       <div id="statHabits"></div>
     </section>
+    <section>
+      <h2>バッジ <b id="badgeCount"></b></h2>
+      <div class="badges" id="badges"></div>
+    </section>
   </div>
   <div id="recordView" hidden>
     <section>
@@ -201,12 +215,16 @@
     </section>
   </div>
 </main>
+<div class="toast" id="toast"></div>
+<canvas id="confetti" hidden></canvas>
 
 <script>
   const STORAGE_KEY = 'daily-checklist';
   const REPEAT_KEY = 'daily-checklist-repeats';
   const LIFE_KEY = 'daily-checklist-life';
   const NOTES_KEY = 'daily-checklist-notes';
+  // バッジ: { earned: { バッジID: 獲得した日 }, initialized }
+  const BADGE_KEY = 'daily-checklist-badges';
   // バックアップの声かけ用。いつ書き出したか・いつまで黙るか・いつから使っているか（いずれも日付キー）
   const BACKUP_KEY = 'daily-checklist-backup';
 
@@ -321,6 +339,7 @@
   }
 
   function render() {
+    checkBadges();
     renderStrip();
     const key = toKey(current);
     const isToday = key === toKey(new Date());
@@ -345,6 +364,7 @@
       cb.type = 'checkbox';
       cb.checked = task.done;
       cb.onchange = () => {
+        const before = rateOf(key);
         if (task.repeat) {
           if (cb.checked) task.repeat.done[key] = true;
           else delete task.repeat.done[key];
@@ -353,6 +373,8 @@
           task.done = cb.checked;
           save();
         }
+        // 寝る系の項目は翌朝にチェックすることが多いので、過去の日でも 100% になった瞬間に出す
+        if (before !== 100 && rateOf(key) === 100 && key <= toKey(new Date())) confetti();
         render();
       };
       const span = document.createElement('span');
@@ -551,6 +573,7 @@
     document.getElementById('statFrom').textContent = days.length ? `${start.getMonth() + 1}/${start.getDate()}` : '';
 
     renderHabits(document.getElementById('statHabits'), days, true);
+    renderBadges();
   }
 
   document.querySelectorAll('#tabs button').forEach(b => {
@@ -623,6 +646,7 @@
   }
 
   function renderRecord() {
+    checkBadges();
     // 人生リスト：未達成を上に、達成済みは達成日の新しい順で下に
     const lifeList = document.getElementById('lifeList');
     lifeList.innerHTML = '';
@@ -783,6 +807,138 @@
     localStorage.setItem(NOTES_KEY, JSON.stringify(backup.notes));
     location.reload();
   };
+
+  // ---- バッジ ----
+  // すべて今あるデータから自動で判定する。一度もらったバッジは、あとで記録が途切れても消さない
+  function loadBadges() {
+    try { return JSON.parse(localStorage.getItem(BADGE_KEY)) || { earned: {} }; }
+    catch { return { earned: {} }; }
+  }
+  const badgeState = loadBadges();
+
+  // 一番古い記録の日から今日までの日付キー
+  function daysUntilToday() {
+    const today = toKey(new Date());
+    const keys = [...Object.keys(data), ...repeats.map(r => r.from)].filter(k => k <= today).sort();
+    if (keys.length === 0) return [];
+    const [y, m, d] = keys[0].split('-').map(Number);
+    const days = [];
+    for (let x = new Date(y, m - 1, d); toKey(x) <= today; x = addDays(x, 1)) days.push(toKey(x));
+    return days;
+  }
+
+  // 繰り返しタスクの、これまでで一番長い連続達成回数
+  function bestStreakOf(r, days) {
+    let best = 0, run = 0;
+    for (const key of days) {
+      if (!scheduled(r, key)) continue;
+      if (r.done[key]) { run++; best = Math.max(best, run); }
+      else if (key < toKey(new Date())) run = 0;  // 今日の未チェックはまだ途切れたとは数えない
+    }
+    return best;
+  }
+
+  // 段階のあるバッジを作る。獲得済みのものと、まだ届いていない最初の1つ（次の目標）だけを返す。
+  // チェックを外して value が下がっても、獲得済みの段は残す
+  function ladder(id, icon, steps, value, name) {
+    const list = [];
+    for (const step of steps) {
+      const badgeId = `${id}-${step}`;
+      list.push({ id: badgeId, icon, name: name(step), value, step });
+      if (value < step && !badgeState.earned[badgeId]) break;
+    }
+    return list;
+  }
+
+  function badgeList() {
+    const days = daysUntilToday();
+    const rates = days.map(rateOf);
+    const fullDays = rates.filter(r => r === 100).length;
+    let bestFullRun = 0, run = 0;
+    for (const r of rates) { run = r === 100 ? run + 1 : 0; bestFullRun = Math.max(bestFullRun, run); }
+    const checks = days.reduce((n, key) => n + tasksOf(key).filter(t => t.done).length, 0);
+    const recordedDays = days.filter(key => tasksOf(key).some(t => t.done)).length;
+    const lifeDone = life.filter(x => x.doneOn).length;
+
+    return [
+      ...repeats.flatMap(r => ladder(`streak-${r.id}`, '🔥', [3, 7, 14, 30, 100], bestStreakOf(r, days), n => `${r.text} ${n}回連続`)),
+      ...ladder('full', '💯', [1, 10, 30, 100], fullDays, n => n === 1 ? '初めての100%' : `100%の日 ${n}日`),
+      ...ladder('fullweek', '👑', [7], bestFullRun, () => '7日連続100%'),
+      ...ladder('checks', '✅', [10, 100, 500, 1000], checks, n => `チェック ${n}個`),
+      ...ladder('life', '⛰️', [1, 5, 10], lifeDone, n => n === 1 ? '人生リスト初達成' : `人生リスト ${n}個`),
+      ...ladder('days', '📅', [7, 30, 100, 365], recordedDays, n => `記録 ${n}日`),
+    ];
+  }
+
+  // 新しく条件を満たしたバッジを保存して知らせる。初回はこれまでの分をまとめて1回だけ知らせる
+  function checkBadges() {
+    const newly = badgeList().filter(b => b.value >= b.step && !badgeState.earned[b.id]);
+    if (newly.length === 0 && badgeState.initialized) return;
+    newly.forEach(b => { badgeState.earned[b.id] = toKey(new Date()); });
+    if (!badgeState.initialized) {
+      badgeState.initialized = true;
+      if (newly.length) toast(`これまでの記録で ${newly.length}個のバッジを獲得しました`);
+    } else {
+      toast(`${newly[0].icon} バッジ獲得：${newly[0].name}` + (newly.length > 1 ? ` ほか${newly.length - 1}個` : ''));
+    }
+    localStorage.setItem(BADGE_KEY, JSON.stringify(badgeState));
+  }
+
+  function renderBadges() {
+    const box = document.getElementById('badges');
+    box.innerHTML = '';
+    // 繰り返しをやめたタスクの未獲得バッジは、もう取れないので出さない
+    const ended = new Set(repeats.filter(r => r.until).map(r => `streak-${r.id}`));
+    const list = badgeList().filter(b => badgeState.earned[b.id] || !ended.has(b.id.replace(/-\d+$/, '')));
+    const earnedCount = list.filter(b => badgeState.earned[b.id]).length;
+    document.getElementById('badgeCount').textContent = `${earnedCount}個`;
+    list.sort((a, b) => !!badgeState.earned[b.id] - !!badgeState.earned[a.id]);
+    for (const b of list) {
+      const got = badgeState.earned[b.id];
+      const el = document.createElement('div');
+      el.className = 'badge' + (got ? '' : ' locked');
+      el.innerHTML = `<div class="icon">${b.icon}</div><b></b><small></small>`;
+      el.querySelector('b').textContent = b.name;
+      el.querySelector('small').textContent = got ? formatKey(got) : `あと${b.step - b.value}`;
+      box.append(el);
+    }
+  }
+
+  let toastTimer;
+  function toast(text) {
+    const el = document.getElementById('toast');
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+  }
+
+  function confetti() {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const canvas = document.getElementById('confetti');
+    canvas.hidden = false;
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    const ctx = canvas.getContext('2d');
+    const colors = ['#2b8a3e', '#f0b429', '#e2483d', '#4c6ef5', '#ff8fab'];
+    const pieces = Array.from({ length: 120 }, () => ({
+      x: canvas.width / 2, y: canvas.height / 3,
+      vx: (Math.random() - .5) * 14, vy: Math.random() * -12 - 4,
+      size: Math.random() * 6 + 4, rot: Math.random() * Math.PI, color: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    const startAt = performance.now();
+    (function frame(t) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const p of pieces) {
+        p.vy += .4; p.x += p.vx; p.y += p.vy; p.rot += .2;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillStyle = p.color; ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+        ctx.restore();
+      }
+      if (t - startAt < 1800) requestAnimationFrame(frame);
+      else { ctx.clearRect(0, 0, canvas.width, canvas.height); canvas.hidden = true; }
+    })(startAt);
+  }
 
   render();
   renderBackupBanner();
