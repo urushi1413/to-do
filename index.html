@@ -90,6 +90,12 @@
   .banner { background:#fff8e1; border:1px solid #f0b429; border-radius:8px; padding:12px; margin-bottom:16px; font-size:14px; }
   .banner div { display:flex; gap:8px; margin-top:8px; }
   .banner button { flex:1; padding:6px 0; }
+  .badge-summary { display:flex; align-items:center; gap:12px; width:100%; padding:12px 16px; margin-bottom:16px; background:var(--card); border:1px solid var(--line); border-radius:8px; color:var(--fg); text-align:left; }
+  .badge-summary .recent { font-size:22px; letter-spacing:-2px; white-space:nowrap; }
+  .badge-summary .text { flex:1; min-width:0; }
+  .badge-summary .text b { display:block; font-size:14px; }
+  .badge-summary .text small { display:block; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge-summary .chev { font-size:22px; color:var(--muted); }
   .badges { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
   .badge { text-align:center; padding:10px 4px; border:1px solid var(--line); border-radius:8px; }
   .badge .icon { font-size:28px; line-height:1.2; }
@@ -151,6 +157,11 @@
   </div>
 
   <div id="statsView" hidden>
+    <button class="badge-summary" id="badgeSummary">
+      <span class="recent" id="badgeRecent"></span>
+      <span class="text"><b id="badgeSummaryCount"></b><small id="badgeNext"></small></span>
+      <span class="chev">›</span>
+    </button>
     <div class="seg" id="period">
       <button data-days="7" class="on">7日</button>
       <button data-days="30">30日</button>
@@ -172,8 +183,17 @@
       <h2>繰り返しタスク別</h2>
       <div id="statHabits"></div>
     </section>
+  </div>
+
+  <div id="badgeView" hidden>
     <section>
-      <h2>バッジ <b id="badgeCount"></b></h2>
+      <div class="nav">
+        <button id="badgeBack">←</button>
+        <strong>バッジ <span id="badgeCount"></span></strong>
+        <span style="width:40px"></span>
+      </div>
+    </section>
+    <section>
       <div class="badges" id="badges"></div>
     </section>
   </div>
@@ -233,6 +253,12 @@
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
+  // 夜更かししても寝るまでは同じ日として扱うため、日付の切り替わりを朝 4 時にする。
+  // 「今日」を決めるところはすべて new Date() ではなくこれを使う
+  const DAY_START_HOUR = 4;
+  function appNow() {
+    return new Date(Date.now() - DAY_START_HOUR * 60 * 60 * 1000);
+  }
   function addDays(d, n) {
     const x = new Date(d);
     x.setDate(x.getDate() + n);
@@ -274,7 +300,7 @@
   // notes: [{ id, month: "2026-11", text, date }, ...]
   // 以前は「達成 / 成長」を kind で分けていたが、1つのリストにまとめた。古い行の kind は読まずに残しておく
   const notes = loadList(NOTES_KEY);
-  let current = new Date();
+  let current = appNow();
 
   const WEEKDAYS = '日月火水木金土';
   function weekdayOf(key) {
@@ -304,7 +330,7 @@
 
   function renderStrip() {
     const strip = document.getElementById('strip');
-    const today = new Date();
+    const today = appNow();
     const todayKey = toKey(today);
     const currentKey = toKey(current);
     const start = addDays(today, -STRIP_PAST) < current ? addDays(today, -STRIP_PAST) : addDays(current, -3);
@@ -342,7 +368,7 @@
     checkBadges();
     renderStrip();
     const key = toKey(current);
-    const isToday = key === toKey(new Date());
+    const isToday = key === toKey(appNow());
     document.getElementById('date').textContent =
       `${current.getMonth() + 1}/${current.getDate()}（${'日月火水木金土'[current.getDay()]}）${isToday ? ' 今日' : ''}`;
 
@@ -374,7 +400,7 @@
           save();
         }
         // 寝る系の項目は翌朝にチェックすることが多いので、過去の日でも 100% になった瞬間に出す
-        if (before !== 100 && rateOf(key) === 100 && key <= toKey(new Date())) confetti();
+        if (before !== 100 && rateOf(key) === 100 && key <= toKey(appNow())) confetti();
         render();
       };
       const span = document.createElement('span');
@@ -410,7 +436,7 @@
     for (let i = 6; i >= 0; i--) {
       const d = addDays(current, -i);
       // 未来の日はまだ終わっていないので、予定があっても 0% ではなく「-」にする
-      const r = toKey(d) > toKey(new Date()) ? null : rateOf(toKey(d));
+      const r = toKey(d) > toKey(appNow()) ? null : rateOf(toKey(d));
       const day = document.createElement('div');
       day.className = 'day' + (r === null ? ' none' : '') + (i === 0 ? ' current' : '');
       day.title = r === null ? '記録なし' : `${r}%`;
@@ -477,7 +503,7 @@
   let period = '7';
 
   function statsRange() {
-    const today = new Date();
+    const today = appNow();
     const end = addDays(today, -1);
     if (period !== 'all') return { start: addDays(today, -Number(period)), end };
     const keys = [...Object.keys(data), ...repeats.map(r => r.from)].filter(k => k <= toKey(end)).sort();
@@ -494,7 +520,7 @@
   // 今日から遡って何日連続で達成しているか。今日がまだ未チェックなら昨日から数える
   function streakOf(r) {
     let count = 0;
-    let d = new Date();
+    let d = appNow();
     if (scheduled(r, toKey(d)) && !r.done[toKey(d)]) d = addDays(d, -1);
     for (; toKey(d) >= r.from; d = addDays(d, -1)) {
       const key = toKey(d);
@@ -573,7 +599,7 @@
     document.getElementById('statFrom').textContent = days.length ? `${start.getMonth() + 1}/${start.getDate()}` : '';
 
     renderHabits(document.getElementById('statHabits'), days, true);
-    renderBadges();
+    renderBadgeSummary();
   }
 
   document.querySelectorAll('#tabs button').forEach(b => {
@@ -583,6 +609,7 @@
       document.getElementById('todayView').hidden = tab !== 'today';
       document.getElementById('statsView').hidden = tab !== 'stats';
       document.getElementById('recordView').hidden = tab !== 'record';
+      document.getElementById('badgeView').hidden = true;
       if (tab === 'stats') renderStats();
       if (tab === 'record') renderRecord();
     };
@@ -596,7 +623,7 @@
   });
 
   // ---- 記録（人生リスト・月の記録） ----
-  let recordMonth = new Date();
+  let recordMonth = appNow();
   recordMonth.setDate(1);
 
   function monthKeyOf(d) {
@@ -660,7 +687,7 @@
         done: !!item.doneOn,
         when: item.doneOn ? formatKey(item.doneOn) : '',
         onToggle: checked => {
-          item.doneOn = checked ? toKey(new Date()) : null;
+          item.doneOn = checked ? toKey(appNow()) : null;
           saveList(LIFE_KEY, life); renderRecord();
         },
         onDelete: () => {
@@ -681,7 +708,7 @@
     if (dateInput.min !== first) {
       dateInput.min = first;
       dateInput.max = last;
-      dateInput.value = month === monthKeyOf(new Date()) ? toKey(new Date()) : last;
+      dateInput.value = month === monthKeyOf(appNow()) ? toKey(appNow()) : last;
     }
     const ul = document.getElementById('noteList');
     ul.innerHTML = '';
@@ -705,7 +732,7 @@
 
     // 習慣の達成率：その月の1日から月末まで。ただし統計と同じく昨日までで区切る
     const days = [];
-    const yesterday = toKey(addDays(new Date(), -1));
+    const yesterday = toKey(addDays(appNow(), -1));
     for (let d = new Date(recordMonth); monthKeyOf(d) === month && toKey(d) <= yesterday; d = addDays(d, 1)) days.push(toKey(d));
     renderHabits(document.getElementById('monthHabits'), days, false);
   }
@@ -743,7 +770,7 @@
   }
   const backupState = loadBackupState();
   if (!backupState.since) {
-    backupState.since = toKey(new Date());
+    backupState.since = toKey(appNow());
     localStorage.setItem(BACKUP_KEY, JSON.stringify(backupState));
   }
   function markBackup(change) {
@@ -755,11 +782,11 @@
   // 最後に書き出してから（一度も無ければ使い始めてから）30 日たち、記録が何かあるときだけ出す
   const BACKUP_INTERVAL = 30, SNOOZE_DAYS = 7;
   function renderBackupBanner() {
-    const today = toKey(new Date());
+    const today = toKey(appNow());
     const base = backupState.lastExport || backupState.since;
     const hasRecords = Object.keys(data).length || repeats.length || life.length || notes.length;
     const due = hasRecords
-      && toKey(addDays(new Date(), -BACKUP_INTERVAL)) >= base
+      && toKey(addDays(appNow(), -BACKUP_INTERVAL)) >= base
       && !(backupState.snoozeUntil && today < backupState.snoozeUntil);
     document.getElementById('backupBanner').hidden = !due;
     document.getElementById('backupMsg').textContent = backupState.lastExport
@@ -769,13 +796,13 @@
 
   async function exportBackup() {
     const backup = { app: 'to-do', version: 1, exportedAt: new Date().toISOString(), data, repeats, life, notes };
-    const name = `to-do-backup-${toKey(new Date())}.json`;
+    const name = `to-do-backup-${toKey(appNow())}.json`;
     const file = new File([JSON.stringify(backup)], name, { type: 'application/json' });
     // ホーム画面から開いた iPhone ではダウンロードが効かないことがあるので、共有シートを優先する
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file] });
-        markBackup({ lastExport: toKey(new Date()) });
+        markBackup({ lastExport: toKey(appNow()) });
       } catch { /* キャンセル。書き出せていないので声かけは残す */ }
       return;
     }
@@ -784,11 +811,11 @@
     a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
-    markBackup({ lastExport: toKey(new Date()) });
+    markBackup({ lastExport: toKey(appNow()) });
   }
   document.getElementById('exportBtn').onclick = exportBackup;
   document.getElementById('bannerExport').onclick = exportBackup;
-  document.getElementById('bannerLater').onclick = () => markBackup({ snoozeUntil: toKey(addDays(new Date(), SNOOZE_DAYS)) });
+  document.getElementById('bannerLater').onclick = () => markBackup({ snoozeUntil: toKey(addDays(appNow(), SNOOZE_DAYS)) });
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').onchange = async e => {
     const file = e.target.files[0];
@@ -818,7 +845,7 @@
 
   // 一番古い記録の日から今日までの日付キー
   function daysUntilToday() {
-    const today = toKey(new Date());
+    const today = toKey(appNow());
     const keys = [...Object.keys(data), ...repeats.map(r => r.from)].filter(k => k <= today).sort();
     if (keys.length === 0) return [];
     const [y, m, d] = keys[0].split('-').map(Number);
@@ -833,7 +860,7 @@
     for (const key of days) {
       if (!scheduled(r, key)) continue;
       if (r.done[key]) { run++; best = Math.max(best, run); }
-      else if (key < toKey(new Date())) run = 0;  // 今日の未チェックはまだ途切れたとは数えない
+      else if (key < toKey(appNow())) run = 0;  // 今日の未チェックはまだ途切れたとは数えない
     }
     return best;
   }
@@ -874,7 +901,7 @@
   function checkBadges() {
     const newly = badgeList().filter(b => b.value >= b.step && !badgeState.earned[b.id]);
     if (newly.length === 0 && badgeState.initialized) return;
-    newly.forEach(b => { badgeState.earned[b.id] = toKey(new Date()); });
+    newly.forEach(b => { badgeState.earned[b.id] = toKey(appNow()); });
     if (!badgeState.initialized) {
       badgeState.initialized = true;
       if (newly.length) toast(`これまでの記録で ${newly.length}個のバッジを獲得しました`);
@@ -884,12 +911,28 @@
     localStorage.setItem(BADGE_KEY, JSON.stringify(badgeState));
   }
 
+  // 繰り返しをやめたタスクの未獲得バッジは、もう取れないので出さない
+  function visibleBadges() {
+    const ended = new Set(repeats.filter(r => r.until).map(r => `streak-${r.id}`));
+    return badgeList().filter(b => badgeState.earned[b.id] || !ended.has(b.id.replace(/-\d+$/, '')));
+  }
+
+  // 統計タブ上部の1行：最近獲得したもの・獲得数・一番近い次の目標
+  function renderBadgeSummary() {
+    const list = visibleBadges();
+    const earned = list.filter(b => badgeState.earned[b.id])
+      .sort((a, b) => badgeState.earned[b.id].localeCompare(badgeState.earned[a.id]));
+    const next = list.filter(b => !badgeState.earned[b.id])
+      .sort((a, b) => (a.step - a.value) / a.step - (b.step - b.value) / b.step)[0];
+    document.getElementById('badgeRecent').textContent = earned.slice(0, 3).map(b => b.icon).join('') || '🏅';
+    document.getElementById('badgeSummaryCount').textContent = `バッジ ${earned.length}個`;
+    document.getElementById('badgeNext').textContent = next ? `次：${next.name}（あと${next.step - next.value}）` : '';
+  }
+
   function renderBadges() {
     const box = document.getElementById('badges');
     box.innerHTML = '';
-    // 繰り返しをやめたタスクの未獲得バッジは、もう取れないので出さない
-    const ended = new Set(repeats.filter(r => r.until).map(r => `streak-${r.id}`));
-    const list = badgeList().filter(b => badgeState.earned[b.id] || !ended.has(b.id.replace(/-\d+$/, '')));
+    const list = visibleBadges();
     const earnedCount = list.filter(b => badgeState.earned[b.id]).length;
     document.getElementById('badgeCount').textContent = `${earnedCount}個`;
     list.sort((a, b) => !!badgeState.earned[b.id] - !!badgeState.earned[a.id]);
@@ -903,6 +946,17 @@
       box.append(el);
     }
   }
+
+  document.getElementById('badgeSummary').onclick = () => {
+    renderBadges();
+    document.getElementById('statsView').hidden = true;
+    document.getElementById('badgeView').hidden = false;
+    scrollTo(0, 0);
+  };
+  document.getElementById('badgeBack').onclick = () => {
+    document.getElementById('badgeView').hidden = true;
+    document.getElementById('statsView').hidden = false;
+  };
 
   let toastTimer;
   function toast(text) {
