@@ -81,10 +81,21 @@
   .backup { display:flex; gap:8px; }
   .backup button { flex:1; padding:8px 0; }
   .hint { font-size:12px; color:var(--muted); margin:8px 0 0; }
+  .banner { background:#fff8e1; border:1px solid #f0b429; border-radius:8px; padding:12px; margin-bottom:16px; font-size:14px; }
+  .banner div { display:flex; gap:8px; margin-top:8px; }
+  .banner button { flex:1; padding:6px 0; }
 </style>
 </head>
 <body>
 <main>
+  <div class="banner" id="backupBanner" hidden>
+    <span id="backupMsg"></span>
+    <div>
+      <button id="bannerExport">書き出す</button>
+      <button id="bannerLater">あとで</button>
+    </div>
+  </div>
+
   <div class="tabs" id="tabs">
     <button data-tab="today" class="on">チェック</button>
     <button data-tab="stats">統計</button>
@@ -196,6 +207,8 @@
   const REPEAT_KEY = 'daily-checklist-repeats';
   const LIFE_KEY = 'daily-checklist-life';
   const NOTES_KEY = 'daily-checklist-notes';
+  // バックアップの声かけ用。いつ書き出したか・いつまで黙るか・いつから使っているか（いずれも日付キー）
+  const BACKUP_KEY = 'daily-checklist-backup';
 
   // toISOString() は UTC になり日本時間の朝 9 時前に日付がずれるため、ローカル日付で組み立てる
   function toKey(d) {
@@ -704,13 +717,46 @@
   document.getElementById('monthNext').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() + 1); renderRecord(); };
 
   // ---- バックアップ ----
-  document.getElementById('exportBtn').onclick = async () => {
+  function loadBackupState() {
+    try { return JSON.parse(localStorage.getItem(BACKUP_KEY)) || {}; }
+    catch { return {}; }
+  }
+  const backupState = loadBackupState();
+  if (!backupState.since) {
+    backupState.since = toKey(new Date());
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backupState));
+  }
+  function markBackup(change) {
+    Object.assign(backupState, change);
+    localStorage.setItem(BACKUP_KEY, JSON.stringify(backupState));
+    renderBackupBanner();
+  }
+
+  // 最後に書き出してから（一度も無ければ使い始めてから）30 日たち、記録が何かあるときだけ出す
+  const BACKUP_INTERVAL = 30, SNOOZE_DAYS = 7;
+  function renderBackupBanner() {
+    const today = toKey(new Date());
+    const base = backupState.lastExport || backupState.since;
+    const hasRecords = Object.keys(data).length || repeats.length || life.length || notes.length;
+    const due = hasRecords
+      && toKey(addDays(new Date(), -BACKUP_INTERVAL)) >= base
+      && !(backupState.snoozeUntil && today < backupState.snoozeUntil);
+    document.getElementById('backupBanner').hidden = !due;
+    document.getElementById('backupMsg').textContent = backupState.lastExport
+      ? `最後のバックアップから ${BACKUP_INTERVAL} 日以上たちました。書き出しておきませんか？`
+      : 'まだ一度もバックアップしていません。機種変更に備えて書き出しておきませんか？';
+  }
+
+  async function exportBackup() {
     const backup = { app: 'to-do', version: 1, exportedAt: new Date().toISOString(), data, repeats, life, notes };
     const name = `to-do-backup-${toKey(new Date())}.json`;
     const file = new File([JSON.stringify(backup)], name, { type: 'application/json' });
     // ホーム画面から開いた iPhone ではダウンロードが効かないことがあるので、共有シートを優先する
     if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file] }); } catch { /* キャンセル */ }
+      try {
+        await navigator.share({ files: [file] });
+        markBackup({ lastExport: toKey(new Date()) });
+      } catch { /* キャンセル。書き出せていないので声かけは残す */ }
       return;
     }
     const a = document.createElement('a');
@@ -718,7 +764,11 @@
     a.download = name;
     a.click();
     URL.revokeObjectURL(a.href);
-  };
+    markBackup({ lastExport: toKey(new Date()) });
+  }
+  document.getElementById('exportBtn').onclick = exportBackup;
+  document.getElementById('bannerExport').onclick = exportBackup;
+  document.getElementById('bannerLater').onclick = () => markBackup({ snoozeUntil: toKey(addDays(new Date(), SNOOZE_DAYS)) });
   document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
   document.getElementById('importFile').onchange = async e => {
     const file = e.target.files[0];
@@ -739,6 +789,7 @@
   };
 
   render();
+  renderBackupBanner();
 </script>
 </body>
 </html>
