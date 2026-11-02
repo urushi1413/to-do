@@ -127,6 +127,18 @@
   .wheel div { height:36px; line-height:36px; text-align:center; font-size:20px; scroll-snap-align:center; }
   .wheel div.off { color:var(--line); }
   .wheel-sep { align-self:center; z-index:1; font-size:20px; color:var(--muted); }
+  .summary-bg { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:16px; }
+  .summary-card { width:100%; max-width:400px; max-height:85vh; overflow-y:auto; background:var(--card); border-radius:12px; padding:20px; }
+  .summary-card h2 { text-align:center; margin-bottom:4px; color:var(--fg); font-size:16px; font-weight:bold; }
+  .summary-card .close { width:100%; margin-top:16px; padding:10px 0; border:none; border-radius:8px; background:var(--accent); color:#fff; font-weight:bold; }
+  .summary .big { text-align:center; font-size:44px; font-weight:bold; }
+  .summary .diff { text-align:center; font-size:13px; color:var(--muted); margin-bottom:12px; }
+  .summary .diff.up { color:var(--accent); }
+  .summary dl { margin:0; }
+  .summary dt { font-size:12px; color:var(--muted); margin-top:10px; }
+  .summary dd { margin:2px 0 0; }
+  #monthSummary { margin:12px 0 0; padding:12px; border:1px solid var(--line); border-radius:8px; }
+  #monthSummary[hidden] { display:none; }
 </style>
 </head>
 <body>
@@ -229,6 +241,7 @@
         <button class="month-btn" id="monthLabel"></button>
         <button id="monthNext">→</button>
       </div>
+      <div class="summary" id="monthSummary" hidden></div>
       <form class="row-form" id="noteForm" style="margin-top:12px">
         <input id="noteInput" placeholder="この月のできごと" autocomplete="off">
         <button type="submit">追加</button>
@@ -251,6 +264,13 @@
     </section>
   </div>
 </main>
+<div class="summary-bg" id="summaryModal" hidden>
+  <div class="summary-card">
+    <h2 id="summaryTitle"></h2>
+    <div class="summary" id="summaryBody"></div>
+    <button class="close" id="summaryClose">閉じる</button>
+  </div>
+</div>
 <div class="sheet-bg" id="monthSheet" hidden>
   <div class="sheet">
     <div class="sheet-head">
@@ -279,6 +299,8 @@
   const NOTES_KEY = 'daily-checklist-notes';
   // バッジ: { earned: { バッジID: 獲得した日 }, initialized }
   const BADGE_KEY = 'daily-checklist-badges';
+  // 振り返り: { week: 最後に見せた週の月曜, month: 最後に見せた月 }
+  const SUMMARY_KEY = 'daily-checklist-summary';
   // バックアップの声かけ用。いつ書き出したか・いつまで黙るか・いつから使っているか（いずれも日付キー）
   const BACKUP_KEY = 'daily-checklist-backup';
 
@@ -566,9 +588,8 @@
   }
 
   // 繰り返しタスクごとの達成率を box に並べる。days は集計する日付キーの配列
-  function renderHabits(box, days, withStreak) {
-    box.innerHTML = '';
-    const rows = repeats
+  function habitRows(days) {
+    return repeats
       .map(r => {
         const planned = days.filter(key => scheduled(r, key));
         const done = planned.filter(key => r.done[key]).length;
@@ -576,6 +597,11 @@
       })
       .filter(x => x.planned > 0)
       .sort((a, b) => b.rate - a.rate);
+  }
+
+  function renderHabits(box, days, withStreak) {
+    box.innerHTML = '';
+    const rows = habitRows(days);
     if (rows.length === 0) {
       box.innerHTML = days.length
         ? '<div class="empty">この期間の繰り返しタスクはありません</div>'
@@ -770,6 +796,11 @@
     const yesterday = toKey(addDays(appNow(), -1));
     for (let d = new Date(recordMonth); monthKeyOf(d) === month && toKey(d) <= yesterday; d = addDays(d, 1)) days.push(toKey(d));
     renderHabits(document.getElementById('monthHabits'), days, false);
+
+    // 終わった月だけ、ページの上にその月のまとめを出す
+    const box = document.getElementById('monthSummary');
+    box.hidden = month >= monthKeyOf(appNow());
+    if (!box.hidden) fillSummary(box, monthDays(recordMonth), monthDays(new Date(recordMonth.getFullYear(), recordMonth.getMonth() - 1, 1)), '前の月', month);
   }
 
   document.getElementById('lifeForm').onsubmit = e => {
@@ -1082,8 +1113,110 @@
     })(startAt);
   }
 
+  // ---- 振り返り（週・月のまとめ） ----
+  // 入力は何も求めず、終わった週・月の記録から自動で作る
+  function monthDays(first) {
+    const days = [];
+    for (let d = new Date(first.getFullYear(), first.getMonth(), 1); d.getMonth() === first.getMonth(); d = addDays(d, 1)) days.push(toKey(d));
+    return days;
+  }
+  function daysOfWeek(monday) {
+    return Array.from({ length: 7 }, (_, i) => toKey(addDays(monday, i)));
+  }
+  function mondayOf(d) {
+    return addDays(new Date(d.getFullYear(), d.getMonth(), d.getDate()), -((d.getDay() + 6) % 7));
+  }
+  function averageRate(days) {
+    const rates = days.map(rateOf).filter(r => r !== null);
+    return rates.length ? Math.round(rates.reduce((a, b) => a + b, 0) / rates.length) : null;
+  }
+
+  // box にまとめを書く。prevDays は比較する直前の期間、month はその月のまとめのときだけ渡す
+  function fillSummary(box, days, prevDays, prevLabel, month) {
+    const avg = averageRate(days);
+    const prev = averageRate(prevDays);
+    const rows = habitRows(days);
+    const badges = badgeList().filter(b => badgeState.earned[b.id] && days.includes(badgeState.earned[b.id]));
+    const items = [];
+    if (rows.length) items.push(['一番続いた', `${rows[0].r.text} ${rows[0].rate}%`]);
+    if (rows.length > 1 && rows.at(-1).rate < rows[0].rate) items.push(['苦戦した', `${rows.at(-1).r.text} ${rows.at(-1).rate}%`]);
+    items.push(['100% の日', `${days.filter(key => rateOf(key) === 100).length}日`]);
+    if (badges.length) items.push(['もらったバッジ', badges.map(b => `${b.icon} ${b.name}`).join('、')]);
+    if (month) {
+      const lifeDone = life.filter(x => x.doneOn && x.doneOn.startsWith(month));
+      if (lifeDone.length) items.push(['人生リストで達成', lifeDone.map(x => x.text).join('、')]);
+      const noteCount = notes.filter(n => n.month === month).length;
+      if (noteCount) items.push(['できごと', `${noteCount}件`]);
+    }
+
+    box.innerHTML = '<div class="big"></div><div class="diff"></div><dl></dl>';
+    box.querySelector('.big').textContent = avg === null ? '-' : `${avg}%`;
+    const diff = box.querySelector('.diff');
+    if (avg !== null && prev !== null) {
+      const d = avg - prev;
+      diff.textContent = `平均達成率（${prevLabel}より ${d > 0 ? '+' : ''}${d}）`;
+      diff.classList.toggle('up', d > 0);
+    } else {
+      diff.textContent = '平均達成率';
+    }
+    const dl = box.querySelector('dl');
+    for (const [label, text] of items) {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = text;
+      dl.append(dt, dd);
+    }
+  }
+
+  function loadSummaryState() {
+    try { return JSON.parse(localStorage.getItem(SUMMARY_KEY)) || {}; }
+    catch { return {}; }
+  }
+
+  // 終わった週・月のうち、まだ見せていない直近の1つずつを出す。両方あるときは月→週の順に続けて出す
+  function showDueSummaries() {
+    const state = loadSummaryState();
+    const now = appNow();
+    const lastWeek = addDays(mondayOf(now), -7);
+    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    // 初めて開いたときは、すでに終わっている分は出さない（中身がほとんど無いため）
+    if (!state.week) state.week = toKey(lastWeek);
+    if (!state.month) state.month = monthKeyOf(lastMonth);
+
+    const queue = [];
+    if (monthKeyOf(lastMonth) > state.month) {
+      state.month = monthKeyOf(lastMonth);
+      const days = monthDays(lastMonth);
+      if (averageRate(days) !== null) {
+        queue.push({ title: `${lastMonth.getFullYear()}年${lastMonth.getMonth() + 1}月のまとめ`, days, prev: monthDays(new Date(lastMonth.getFullYear(), lastMonth.getMonth() - 1, 1)), prevLabel: '前の月', month: monthKeyOf(lastMonth) });
+      }
+    }
+    if (toKey(lastWeek) > state.week) {
+      state.week = toKey(lastWeek);
+      const days = daysOfWeek(lastWeek);
+      if (averageRate(days) !== null) {
+        const end = addDays(lastWeek, 6);
+        queue.push({ title: `先週のまとめ（${lastWeek.getMonth() + 1}/${lastWeek.getDate()}〜${end.getMonth() + 1}/${end.getDate()}）`, days, prev: daysOfWeek(addDays(lastWeek, -7)), prevLabel: '前の週' });
+      }
+    }
+    localStorage.setItem(SUMMARY_KEY, JSON.stringify(state));
+
+    const modal = document.getElementById('summaryModal');
+    const next = () => {
+      const item = queue.shift();
+      if (!item) { modal.hidden = true; return; }
+      document.getElementById('summaryTitle').textContent = item.title;
+      fillSummary(document.getElementById('summaryBody'), item.days, item.prev, item.prevLabel, item.month);
+      modal.hidden = false;
+    };
+    document.getElementById('summaryClose').onclick = next;
+    next();
+  }
+
   render();
   renderBackupBanner();
+  showDueSummaries();
 </script>
 </body>
 </html>
