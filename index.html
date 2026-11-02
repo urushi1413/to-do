@@ -96,18 +96,20 @@
   .banner div { display:flex; gap:8px; margin-top:8px; }
   .banner button { flex:1; padding:6px 0; }
   .badge-summary { display:flex; align-items:center; gap:12px; width:100%; padding:12px 16px; margin-bottom:16px; background:var(--card); border:1px solid var(--line); border-radius:8px; color:var(--fg); text-align:left; }
-  .badge-summary .recent { font-size:22px; letter-spacing:-2px; white-space:nowrap; }
+  .badge-summary .recent { display:flex; white-space:nowrap; }
+  .badge-summary .recent svg { width:30px; height:30px; margin-right:-6px; }
   .badge-summary .text { flex:1; min-width:0; }
   .badge-summary .text b { display:block; font-size:14px; }
   .badge-summary .text small { display:block; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .badge-summary .chev { font-size:22px; color:var(--muted); }
-  .badges { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; }
-  .badge { text-align:center; padding:10px 4px; border:1px solid var(--line); border-radius:8px; }
-  .badge .icon { font-size:28px; line-height:1.2; }
+  .badges { display:grid; grid-template-columns:repeat(3, 1fr); gap:4px; }
+  .badge { text-align:center; padding:10px 4px; }
+  .badge svg { display:block; width:72px; height:75px; margin:0 auto; }
   .badge b { display:block; font-size:12px; margin-top:4px; }
-  .badge small { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
-  .badge.locked .icon { filter:grayscale(1); opacity:.35; }
+  .badge span { display:block; font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge small { display:block; font-size:10px; color:#aaa; margin-top:2px; }
   .badge.locked b { color:var(--muted); }
+  .toast svg { width:22px; height:22px; vertical-align:-6px; margin-right:6px; }
   .toast { position:fixed; left:50%; bottom:calc(76px + env(safe-area-inset-bottom)); transform:translate(-50%, 20px); width:max-content; max-width:90vw; background:#222; color:#fff; padding:10px 16px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .2s, transform .2s; pointer-events:none; z-index:10; }
   .toast.show { opacity:1; transform:translate(-50%, 0); }
   #confetti { position:fixed; inset:0; pointer-events:none; z-index:9; }
@@ -986,11 +988,12 @@
 
   // 段階のあるバッジを作る。獲得済みのものと、まだ届いていない最初の1つ（次の目標）だけを返す。
   // チェックを外して value が下がっても、獲得済みの段は残す
-  function ladder(id, icon, steps, value, name) {
+  // tier は宝石の段階（0=アンバー〜4=ダイヤ）。段の順に上がり、tierFrom で始まりをずらせる
+  function ladder(id, icon, steps, value, name, { sub = '', tierFrom = 0 } = {}) {
     const list = [];
-    for (const step of steps) {
+    for (const [i, step] of steps.entries()) {
       const badgeId = `${id}-${step}`;
-      list.push({ id: badgeId, icon, name: name(step), value, step });
+      list.push({ id: badgeId, icon, name: name(step), sub, value, step, tier: Math.min(4, tierFrom + i) });
       if (value < step && !badgeState.earned[badgeId]) break;
     }
     return list;
@@ -1007,13 +1010,82 @@
     const lifeDone = life.filter(x => x.doneOn).length;
 
     return [
-      ...repeats.flatMap(r => ladder(`streak-${r.id}`, '🔥', [3, 7, 14, 30, 100], bestStreakOf(r, days), n => `${r.text} ${n}回連続`)),
-      ...ladder('full', '💯', [1, 10, 30, 100], fullDays, n => n === 1 ? '初めての100%' : `100%の日 ${n}日`),
-      ...ladder('fullweek', '👑', [7], bestFullRun, () => '7日連続100%'),
-      ...ladder('checks', '✅', [10, 100, 500, 1000], checks, n => `チェック ${n}個`),
-      ...ladder('life', '⛰️', [1, 5, 10], lifeDone, n => n === 1 ? '人生リスト初達成' : `人生リスト ${n}個`),
-      ...ladder('days', '📅', [7, 30, 100, 365], recordedDays, n => `記録 ${n}日`),
+      // 習慣の名前は人それぞれなので、バッジ名には入れず下に小さく添える
+      ...repeats.flatMap(r => ladder(`streak-${r.id}`, 'flame', [3, 7, 14, 30, 100], bestStreakOf(r, days), n => `${n}回連続`, { sub: r.text })),
+      ...ladder('full', 'hundred', [1, 10, 30, 100], fullDays, n => n === 1 ? '初めての100%' : `100%の日 ${n}日`),
+      ...ladder('fullweek', 'crown', [7], bestFullRun, () => '7日連続100%', { tierFrom: 2 }),
+      ...ladder('checks', 'check', [10, 100, 500, 1000], checks, n => `チェック ${n}個`),
+      ...ladder('life', 'mountain', [1, 5, 10], lifeDone, n => n === 1 ? '人生リスト初達成' : `人生リスト ${n}個`, { tierFrom: 1 }),
+      ...ladder('days', 'cal', [7, 30, 100, 365], recordedDays, n => `記録 ${n}日`),
     ];
+  }
+
+  // バッジの絵。宝石風の六角形（獲得）と、六角形の外周を進み具合だけ緑でなぞったもの（未獲得）
+  const BADGE_ICONS = {
+    flame: '<path d="M12 2.5c1.2 3.2 5 5 5 9.5a5 5 0 0 1-10 0c0-2 1-3.4 2-4.3c0 2 1.6 3 1.6 3c-.5-3.4.4-6.2 1.4-8.2z"/>',
+    hundred: '<path d="M3.5 8.5l1.5-1v9.5M9.5 12a2 4.3 0 1 0 4 0a2 4.3 0 1 0-4 0M15.5 12a2 4.3 0 1 0 4 0a2 4.3 0 1 0-4 0"/>',
+    crown: '<path d="M4 18h16M5 18L4 8l4.5 4L12 5.5l3.5 6.5L20 8l-1 10"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    mountain: '<path d="M2.5 19.5l7-11.5 3.5 6 2.2-3.2 6.3 8.7z"/><path d="M9.5 8V3.5l3.8 1.6-3.8 1.6"/>',
+    cal: '<rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  };
+  // 段階ごとの宝石 [名前, [明, 中, 暗]]
+  const GEMS = [
+    ['アンバー', ['#ffd9a0', '#f29d38', '#9c4f0e']],
+    ['サファイア', ['#bfe0ff', '#3d8bff', '#0f2f8f']],
+    ['エメラルド', ['#b6f5cf', '#22b765', '#0b5a33']],
+    ['ルビー', ['#ffc1cc', '#e8264f', '#7a0820']],
+    ['ダイヤ', ['#ffffff', '#cfe9ff', '#7fa6c9']],
+  ];
+  let gemUid = 0;
+  function hexPoints(r) {
+    return Array.from({ length: 6 }, (_, i) => {
+      const a = Math.PI / 3 * i - Math.PI / 2;
+      return [50 + r * Math.cos(a), 52 + r * Math.sin(a)];
+    });
+  }
+  const joinPoints = ps => ps.map(p => p.map(n => n.toFixed(2)).join(',')).join(' ');
+  function badgeIcon(icon, color) {
+    return `<g transform="translate(32.6 34.6) scale(1.45)"><g fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${BADGE_ICONS[icon]}</g></g>`;
+  }
+  function gemSvg(icon, tier) {
+    const id = 'gem' + (gemUid++);
+    const [light, mid, dark] = GEMS[tier][1];
+    const rim = hexPoints(41), inner = hexPoints(30);
+    // 外周の6面を明暗違いで塗り、カットした宝石のように見せる
+    const shades = [.55, .3, -.15, -.35, -.1, .25];
+    const facets = rim.map((p, i) => {
+      const o = shades[i];
+      return `<polygon points="${joinPoints([p, rim[(i + 1) % 6], inner[(i + 1) % 6], inner[i]])}" fill="${o > 0 ? '#fff' : '#000'}" fill-opacity="${Math.abs(o)}"/>`;
+    }).join('');
+    return `<svg viewBox="0 0 100 104"><defs>
+      <linearGradient id="${id}m" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".35" stop-color="#c9ced6"/><stop offset=".6" stop-color="#f4f6f9"/><stop offset="1" stop-color="#8c939e"/></linearGradient>
+      <radialGradient id="${id}b" cx=".38" cy=".3" r=".85"><stop offset="0" stop-color="${light}"/><stop offset=".45" stop-color="${mid}"/><stop offset="1" stop-color="${dark}"/></radialGradient>
+      <radialGradient id="${id}t" cx=".5" cy=".42" r=".6"><stop offset="0" stop-color="${light}" stop-opacity=".9"/><stop offset=".7" stop-color="${mid}" stop-opacity=".95"/><stop offset="1" stop-color="${dark}"/></radialGradient>
+      <linearGradient id="${id}s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".75"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+      <filter id="${id}f" x="-20%" y="-20%" width="140%" height="150%"><feDropShadow dx="0" dy="2.5" stdDeviation="2.5" flood-color="#000" flood-opacity=".28"/></filter>
+      <filter id="${id}i"><feDropShadow dx="0" dy="1.2" stdDeviation="1" flood-color="${dark}" flood-opacity=".9"/></filter>
+    </defs>
+    <polygon points="${joinPoints(hexPoints(46))}" fill="url(#${id}m)" filter="url(#${id}f)"/>
+    <polygon points="${joinPoints(hexPoints(43.5))}" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="1"/>
+    <polygon points="${joinPoints(rim)}" fill="url(#${id}b)"/>
+    ${facets}
+    <polygon points="${joinPoints(inner)}" fill="url(#${id}t)"/>
+    <polygon points="${joinPoints(inner)}" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width=".8"/>
+    <path d="M${rim[5]} L${rim[0]} L${rim[1]} L58,44 L38,48 Z" fill="url(#${id}s)" opacity=".55"/>
+    <g filter="url(#${id}i)">${badgeIcon(icon, '#fff')}</g>
+    <circle cx="33" cy="32" r="2.2" fill="#fff" opacity=".9"/>
+    </svg>`;
+  }
+  function lockedSvg(icon, progress) {
+    const ring = hexPoints(42);
+    const d = 'M' + ring.map(p => p.join(',')).join(' L') + ' Z';
+    return `<svg viewBox="0 0 100 104">
+      <polygon points="${joinPoints(hexPoints(35))}" fill="#f2f3f5"/>
+      <path d="${d}" fill="none" stroke="#e3e5e8" stroke-width="6" stroke-linejoin="round"/>
+      <path d="${d}" fill="none" stroke="#2b8a3e" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" pathLength="100" stroke-dasharray="${Math.min(1, progress) * 100} 100"/>
+      ${badgeIcon(icon, '#b9bdc4')}
+    </svg>`;
   }
 
   // 新しく条件を満たしたバッジを保存して知らせる。初回はこれまでの分をまとめて1回だけ知らせる
@@ -1025,7 +1097,8 @@
       badgeState.initialized = true;
       if (newly.length) toast(`これまでの記録で ${newly.length}個のバッジを獲得しました`);
     } else {
-      toast(`${newly[0].icon} バッジ獲得：${newly[0].name}` + (newly.length > 1 ? ` ほか${newly.length - 1}個` : ''));
+      const b = newly[0];
+      toast(`バッジ獲得：${b.name}${b.sub ? `（${b.sub}）` : ''}` + (newly.length > 1 ? ` ほか${newly.length - 1}個` : ''), gemSvg(b.icon, b.tier));
     }
     localStorage.setItem(BADGE_KEY, JSON.stringify(badgeState));
   }
@@ -1043,9 +1116,11 @@
       .sort((a, b) => badgeState.earned[b.id].localeCompare(badgeState.earned[a.id]));
     const next = list.filter(b => !badgeState.earned[b.id])
       .sort((a, b) => (a.step - a.value) / a.step - (b.step - b.value) / b.step)[0];
-    document.getElementById('badgeRecent').textContent = earned.slice(0, 3).map(b => b.icon).join('') || '🏅';
+    document.getElementById('badgeRecent').innerHTML = earned.length
+      ? earned.slice(0, 3).map(b => gemSvg(b.icon, b.tier)).join('')
+      : lockedSvg('check', 0);
     document.getElementById('badgeSummaryCount').textContent = `バッジ ${earned.length}個`;
-    document.getElementById('badgeNext').textContent = next ? `次：${next.name}（あと${next.step - next.value}）` : '';
+    document.getElementById('badgeNext').textContent = next ? `次：${next.name}${next.sub ? `（${next.sub}）` : ''} あと${next.step - next.value}` : '';
   }
 
   function renderBadges() {
@@ -1059,9 +1134,10 @@
       const got = badgeState.earned[b.id];
       const el = document.createElement('div');
       el.className = 'badge' + (got ? '' : ' locked');
-      el.innerHTML = `<div class="icon">${b.icon}</div><b></b><small></small>`;
+      el.innerHTML = (got ? gemSvg(b.icon, b.tier) : lockedSvg(b.icon, b.value / b.step)) + '<b></b><span></span><small></small>';
       el.querySelector('b').textContent = b.name;
-      el.querySelector('small').textContent = got ? formatKey(got) : `あと${b.step - b.value}`;
+      el.querySelector('span').textContent = b.sub;
+      el.querySelector('small').textContent = got ? `${'★'.repeat(b.tier + 1)} ${formatKey(got)}` : `あと${b.step - b.value}`;
       box.append(el);
     }
   }
@@ -1078,9 +1154,10 @@
   };
 
   let toastTimer;
-  function toast(text) {
+  function toast(text, iconSvg = '') {
     const el = document.getElementById('toast');
-    el.textContent = text;
+    el.innerHTML = iconSvg;
+    el.append(text);
     el.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
@@ -1141,7 +1218,7 @@
     if (rows.length) items.push(['一番続いた', `${rows[0].r.text} ${rows[0].rate}%`]);
     if (rows.length > 1 && rows.at(-1).rate < rows[0].rate) items.push(['苦戦した', `${rows.at(-1).r.text} ${rows.at(-1).rate}%`]);
     items.push(['100% の日', `${days.filter(key => rateOf(key) === 100).length}日`]);
-    if (badges.length) items.push(['もらったバッジ', badges.map(b => `${b.icon} ${b.name}`).join('、')]);
+    if (badges.length) items.push(['もらったバッジ', badges.map(b => b.name + (b.sub ? `（${b.sub}）` : '')).join('、')]);
     if (month) {
       const lifeDone = life.filter(x => x.doneOn && x.doneOn.startsWith(month));
       if (lifeDone.length) items.push(['人生リストで達成', lifeDone.map(x => x.text).join('、')]);
