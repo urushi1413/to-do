@@ -175,17 +175,11 @@
       </div>
       <form class="row-form" id="noteForm" style="margin-top:12px">
         <input id="noteInput" placeholder="この月のできごと" autocomplete="off">
-        <select id="noteKind">
-          <option value="achieved">達成</option>
-          <option value="grown">成長</option>
-        </select>
         <button type="submit">追加</button>
       </form>
       <label class="note-date">日付 <input type="date" id="noteDate"></label>
-      <h3>達成したこと</h3>
-      <ul id="achievedList"></ul>
-      <h3>成長したこと</h3>
-      <ul id="grownList"></ul>
+      <h3>できごと</h3>
+      <ul id="noteList"></ul>
       <h3>習慣の達成率</h3>
       <div id="monthHabits"></div>
     </section>
@@ -253,7 +247,8 @@
   const repeats = loadRepeats();
   // life: [{ id, text, doneOn }, ...] 日付の無い人生単位のリスト。doneOn は達成した日（未達成なら null）
   const life = loadList(LIFE_KEY);
-  // notes: [{ id, month: "2026-11", kind: "achieved" | "grown", text, date }, ...]
+  // notes: [{ id, month: "2026-11", text, date }, ...]
+  // 以前は「達成 / 成長」を kind で分けていたが、1つのリストにまとめた。古い行の kind は読まずに残しておく
   const notes = loadList(NOTES_KEY);
   let current = new Date();
 
@@ -658,30 +653,25 @@
       dateInput.max = last;
       dateInput.value = month === monthKeyOf(new Date()) ? toKey(new Date()) : last;
     }
-    const lists = { achieved: document.getElementById('achievedList'), grown: document.getElementById('grownList') };
-    for (const kind of ['achieved', 'grown']) {
-      const ul = lists[kind];
-      ul.innerHTML = '';
-      const entries = notes
-        .filter(n => n.month === month && n.kind === kind)
-        .map(n => ({ date: n.date, li: recordItem({
-          text: n.text,
-          when: formatKey(n.date).slice(5),
-          onDelete: () => {
-            if (!confirm(`「${n.text}」を消しますか？`)) return;
-            notes.splice(notes.indexOf(n), 1);
-            saveList(NOTES_KEY, notes); renderRecord();
-          },
-        }) }));
-      if (kind === 'achieved') {
-        for (const item of life.filter(x => x.doneOn && x.doneOn.startsWith(month))) {
-          entries.push({ date: item.doneOn, li: recordItem({ text: item.text, when: formatKey(item.doneOn).slice(5), tagText: '人生リスト' }) });
-        }
-      }
-      entries.sort((a, b) => a.date.localeCompare(b.date));
-      if (entries.length === 0) ul.innerHTML = '<li class="empty">まだありません</li>';
-      entries.forEach(e => ul.append(e.li));
+    const ul = document.getElementById('noteList');
+    ul.innerHTML = '';
+    const entries = notes
+      .filter(n => n.month === month)
+      .map(n => ({ date: n.date, li: recordItem({
+        text: n.text,
+        when: formatKey(n.date).slice(5),
+        onDelete: () => {
+          if (!confirm(`「${n.text}」を消しますか？`)) return;
+          notes.splice(notes.indexOf(n), 1);
+          saveList(NOTES_KEY, notes); renderRecord();
+        },
+      }) }));
+    for (const item of life.filter(x => x.doneOn && x.doneOn.startsWith(month))) {
+      entries.push({ date: item.doneOn, li: recordItem({ text: item.text, when: formatKey(item.doneOn).slice(5), tagText: '人生リスト' }) });
     }
+    entries.sort((a, b) => a.date.localeCompare(b.date));
+    if (entries.length === 0) ul.innerHTML = '<li class="empty">まだありません</li>';
+    entries.forEach(e => ul.append(e.li));
 
     // 習慣の達成率：その月の1日から月末まで。ただし統計と同じく昨日までで区切る
     const days = [];
@@ -708,7 +698,7 @@
     const month = monthKeyOf(recordMonth);
     const picked = document.getElementById('noteDate').value;
     const date = picked && picked.startsWith(month) ? picked : document.getElementById('noteDate').min;
-    notes.push({ id: Date.now(), month, kind: document.getElementById('noteKind').value, text, date });
+    notes.push({ id: Date.now(), month, text, date });
     saveList(NOTES_KEY, notes);
     input.value = '';
     renderRecord();
