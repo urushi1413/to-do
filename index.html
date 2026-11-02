@@ -69,6 +69,16 @@
   .habit-head { display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-bottom:6px; }
   .habit-head b { font-size:18px; }
   .habit small { font-size:12px; color:var(--muted); }
+  .row-form { display:flex; gap:8px; margin-bottom:12px; }
+  .row-form input { flex:1; min-width:0; padding:8px; font:inherit; border:1px solid var(--line); border-radius:6px; }
+  .row-form select { font:inherit; padding:0 4px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  .row-form button { white-space:nowrap; }
+  h2 b { color:var(--fg); }
+  h3 { font-size:13px; margin:16px 0 4px; }
+  li small.when { font-size:11px; color:var(--muted); white-space:nowrap; }
+  .backup { display:flex; gap:8px; }
+  .backup button { flex:1; padding:8px 0; }
+  .hint { font-size:12px; color:var(--muted); margin:8px 0 0; }
 </style>
 </head>
 <body>
@@ -76,6 +86,7 @@
   <div class="tabs" id="tabs">
     <button data-tab="today" class="on">チェック</button>
     <button data-tab="stats">統計</button>
+    <button data-tab="record">記録</button>
   </div>
 
   <div id="todayView">
@@ -133,11 +144,55 @@
       <div id="statHabits"></div>
     </section>
   </div>
+  <div id="recordView" hidden>
+    <section>
+      <h2>人生リスト <b id="lifeCount"></b></h2>
+      <form class="row-form" id="lifeForm">
+        <input id="lifeInput" placeholder="いつかやりたいこと" autocomplete="off">
+        <button type="submit">追加</button>
+      </form>
+      <ul id="lifeList"></ul>
+    </section>
+
+    <section>
+      <div class="nav">
+        <button id="monthPrev">←</button>
+        <strong id="monthLabel"></strong>
+        <button id="monthNext">→</button>
+      </div>
+      <form class="row-form" id="noteForm" style="margin-top:12px">
+        <input id="noteInput" placeholder="この月のできごと" autocomplete="off">
+        <select id="noteKind">
+          <option value="achieved">達成</option>
+          <option value="grown">成長</option>
+        </select>
+        <button type="submit">追加</button>
+      </form>
+      <h3>達成したこと</h3>
+      <ul id="achievedList"></ul>
+      <h3>成長したこと</h3>
+      <ul id="grownList"></ul>
+      <h3>習慣の達成率</h3>
+      <div id="monthHabits"></div>
+    </section>
+
+    <section>
+      <h2>バックアップ</h2>
+      <div class="backup">
+        <button id="exportBtn">書き出し</button>
+        <button id="importBtn">読み込み</button>
+      </div>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+      <p class="hint">記録はこのスマホの中にだけ保存されています。機種変更やブラウザのデータ削除で消えるので、ときどき書き出してファイルを保存しておいてください。</p>
+    </section>
+  </div>
 </main>
 
 <script>
   const STORAGE_KEY = 'daily-checklist';
   const REPEAT_KEY = 'daily-checklist-repeats';
+  const LIFE_KEY = 'daily-checklist-life';
+  const NOTES_KEY = 'daily-checklist-notes';
 
   // toISOString() は UTC になり日本時間の朝 9 時前に日付がずれるため、ローカル日付で組み立てる
   function toKey(d) {
@@ -166,12 +221,24 @@
     localStorage.setItem(REPEAT_KEY, JSON.stringify(repeats));
   }
 
+  function loadList(storageKey) {
+    try { return JSON.parse(localStorage.getItem(storageKey)) || []; }
+    catch { return []; }
+  }
+  function saveList(storageKey, list) {
+    localStorage.setItem(storageKey, JSON.stringify(list));
+  }
+
   // data: { "2026-10-26": [{ id, text, done }, ...], ... }
   const data = load();
   // repeats: [{ id, text, from, until, days, done: { "2026-10-26": true } }, ...]
   // from 以降・until より前の日に出る。days（0=日〜6=土）があればその曜日だけ、無ければ毎日。
   // やめても until で止めるだけなので過去の記録は残る
   const repeats = loadRepeats();
+  // life: [{ id, text, doneOn }, ...] 日付の無い人生単位のリスト。doneOn は達成した日（未達成なら null）
+  const life = loadList(LIFE_KEY);
+  // notes: [{ id, month: "2026-11", kind: "achieved" | "grown", text, date }, ...]
+  const notes = loadList(NOTES_KEY);
   let current = new Date();
 
   const WEEKDAYS = '日月火水木金土';
@@ -399,33 +466,8 @@
     return count;
   }
 
-  function renderStats() {
-    const { start, end } = statsRange();
-    const days = [];
-    for (let d = new Date(start); toKey(d) <= toKey(end); d = addDays(d, 1)) days.push(toKey(d));
-
-    let doneCount = 0, totalCount = 0, fullDays = 0, rateSum = 0, ratedDays = 0;
-    const bars = document.getElementById('statBars');
-    bars.innerHTML = '';
-    for (const key of days) {
-      const tasks = tasksOf(key);
-      doneCount += tasks.filter(t => t.done).length;
-      totalCount += tasks.length;
-      const r = rateOf(key);
-      if (r !== null) { rateSum += r; ratedDays++; }
-      if (r === 100) fullDays++;
-      const bar = document.createElement('div');
-      bar.className = r === null ? 'none' : '';
-      bar.style.height = `${r || 0}%`;
-      bar.title = `${key} ${r === null ? '記録なし' : r + '%'}`;
-      bars.append(bar);
-    }
-    document.getElementById('statAvg').textContent = ratedDays ? `${Math.round(rateSum / ratedDays)}%` : '-';
-    document.getElementById('statDone').textContent = `${doneCount}/${totalCount}`;
-    document.getElementById('statFull').textContent = `${fullDays}日`;
-    document.getElementById('statFrom').textContent = days.length ? `${start.getMonth() + 1}/${start.getDate()}` : '';
-
-    const box = document.getElementById('statHabits');
+  // 繰り返しタスクごとの達成率を box に並べる。days は集計する日付キーの配列
+  function renderHabits(box, days, withStreak) {
     box.innerHTML = '';
     const rows = repeats
       .map(r => {
@@ -458,20 +500,51 @@
       bar.className = 'bar';
       bar.innerHTML = `<div style="width:${rate}%"></div>`;
       const note = document.createElement('small');
-      const streak = r.until ? 0 : streakOf(r);
+      const streak = withStreak && !r.until ? streakOf(r) : 0;
       note.textContent = `${done}/${planned}回` + (streak ? ` ・ ${streak}回連続` : '');
       row.append(head, bar, note);
       box.append(row);
     }
   }
 
+  function renderStats() {
+    const { start, end } = statsRange();
+    const days = [];
+    for (let d = new Date(start); toKey(d) <= toKey(end); d = addDays(d, 1)) days.push(toKey(d));
+
+    let doneCount = 0, totalCount = 0, fullDays = 0, rateSum = 0, ratedDays = 0;
+    const bars = document.getElementById('statBars');
+    bars.innerHTML = '';
+    for (const key of days) {
+      const tasks = tasksOf(key);
+      doneCount += tasks.filter(t => t.done).length;
+      totalCount += tasks.length;
+      const r = rateOf(key);
+      if (r !== null) { rateSum += r; ratedDays++; }
+      if (r === 100) fullDays++;
+      const bar = document.createElement('div');
+      bar.className = r === null ? 'none' : '';
+      bar.style.height = `${r || 0}%`;
+      bar.title = `${key} ${r === null ? '記録なし' : r + '%'}`;
+      bars.append(bar);
+    }
+    document.getElementById('statAvg').textContent = ratedDays ? `${Math.round(rateSum / ratedDays)}%` : '-';
+    document.getElementById('statDone').textContent = `${doneCount}/${totalCount}`;
+    document.getElementById('statFull').textContent = `${fullDays}日`;
+    document.getElementById('statFrom').textContent = days.length ? `${start.getMonth() + 1}/${start.getDate()}` : '';
+
+    renderHabits(document.getElementById('statHabits'), days, true);
+  }
+
   document.querySelectorAll('#tabs button').forEach(b => {
     b.onclick = () => {
       document.querySelectorAll('#tabs button').forEach(x => x.classList.toggle('on', x === b));
-      const stats = b.dataset.tab === 'stats';
-      document.getElementById('todayView').hidden = stats;
-      document.getElementById('statsView').hidden = !stats;
-      if (stats) renderStats();
+      const tab = b.dataset.tab;
+      document.getElementById('todayView').hidden = tab !== 'today';
+      document.getElementById('statsView').hidden = tab !== 'stats';
+      document.getElementById('recordView').hidden = tab !== 'record';
+      if (tab === 'stats') renderStats();
+      if (tab === 'record') renderRecord();
     };
   });
   document.querySelectorAll('#period button').forEach(b => {
@@ -481,6 +554,177 @@
       renderStats();
     };
   });
+
+  // ---- 記録（人生リスト・月の記録） ----
+  let recordMonth = new Date();
+  recordMonth.setDate(1);
+
+  function monthKeyOf(d) {
+    return toKey(d).slice(0, 7);
+  }
+  function formatKey(key) {
+    const [y, m, d] = key.split('-').map(Number);
+    return `${y}/${m}/${d}`;
+  }
+
+  // 1行ぶんの li を作る。onToggle を渡すとチェックボックスが付く
+  function recordItem({ text, done, when, tagText, onToggle, onDelete }) {
+    const li = document.createElement('li');
+    li.className = done ? 'done' : '';
+    const label = document.createElement('label');
+    if (onToggle) {
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = done;
+      cb.onchange = () => onToggle(cb.checked);
+      label.append(cb);
+    }
+    const span = document.createElement('span');
+    span.textContent = text;
+    label.append(span);
+    if (tagText) {
+      const tag = document.createElement('small');
+      tag.className = 'tag';
+      tag.textContent = tagText;
+      label.append(tag);
+    }
+    li.append(label);
+    if (when) {
+      const w = document.createElement('small');
+      w.className = 'when';
+      w.textContent = when;
+      li.append(w);
+    }
+    if (onDelete) {
+      const del = document.createElement('button');
+      del.className = 'del';
+      del.textContent = '×';
+      del.onclick = onDelete;
+      li.append(del);
+    }
+    return li;
+  }
+
+  function renderRecord() {
+    // 人生リスト：未達成を上に、達成済みは達成日の新しい順で下に
+    const lifeList = document.getElementById('lifeList');
+    lifeList.innerHTML = '';
+    const doneCount = life.filter(x => x.doneOn).length;
+    document.getElementById('lifeCount').textContent = life.length ? `${life.length}個中 ${doneCount}個達成` : '';
+    const sorted = [...life.filter(x => !x.doneOn), ...life.filter(x => x.doneOn).sort((a, b) => b.doneOn.localeCompare(a.doneOn))];
+    if (sorted.length === 0) lifeList.innerHTML = '<li class="empty">まだありません</li>';
+    for (const item of sorted) {
+      lifeList.append(recordItem({
+        text: item.text,
+        done: !!item.doneOn,
+        when: item.doneOn ? formatKey(item.doneOn) : '',
+        onToggle: checked => {
+          item.doneOn = checked ? toKey(new Date()) : null;
+          saveList(LIFE_KEY, life); renderRecord();
+        },
+        onDelete: () => {
+          if (!confirm(`「${item.text}」を人生リストから消しますか？`)) return;
+          life.splice(life.indexOf(item), 1);
+          saveList(LIFE_KEY, life); renderRecord();
+        },
+      }));
+    }
+
+    // 月の記録：手で書いたメモに、その月に達成した人生リストの項目を自動で足す
+    const month = monthKeyOf(recordMonth);
+    document.getElementById('monthLabel').textContent = `${recordMonth.getFullYear()}年${recordMonth.getMonth() + 1}月`;
+    const lists = { achieved: document.getElementById('achievedList'), grown: document.getElementById('grownList') };
+    for (const kind of ['achieved', 'grown']) {
+      const ul = lists[kind];
+      ul.innerHTML = '';
+      const entries = notes
+        .filter(n => n.month === month && n.kind === kind)
+        .map(n => ({ date: n.date, li: recordItem({
+          text: n.text,
+          when: formatKey(n.date).slice(5),
+          onDelete: () => {
+            if (!confirm(`「${n.text}」を消しますか？`)) return;
+            notes.splice(notes.indexOf(n), 1);
+            saveList(NOTES_KEY, notes); renderRecord();
+          },
+        }) }));
+      if (kind === 'achieved') {
+        for (const item of life.filter(x => x.doneOn && x.doneOn.startsWith(month))) {
+          entries.push({ date: item.doneOn, li: recordItem({ text: item.text, when: formatKey(item.doneOn).slice(5), tagText: '人生リスト' }) });
+        }
+      }
+      entries.sort((a, b) => a.date.localeCompare(b.date));
+      if (entries.length === 0) ul.innerHTML = '<li class="empty">まだありません</li>';
+      entries.forEach(e => ul.append(e.li));
+    }
+
+    // 習慣の達成率：その月の1日から月末まで。ただし統計と同じく昨日までで区切る
+    const days = [];
+    const yesterday = toKey(addDays(new Date(), -1));
+    for (let d = new Date(recordMonth); monthKeyOf(d) === month && toKey(d) <= yesterday; d = addDays(d, 1)) days.push(toKey(d));
+    renderHabits(document.getElementById('monthHabits'), days, false);
+  }
+
+  document.getElementById('lifeForm').onsubmit = e => {
+    e.preventDefault();
+    const input = document.getElementById('lifeInput');
+    const text = input.value.trim();
+    if (!text) return;
+    life.push({ id: Date.now(), text, doneOn: null });
+    saveList(LIFE_KEY, life);
+    input.value = '';
+    renderRecord();
+  };
+  document.getElementById('noteForm').onsubmit = e => {
+    e.preventDefault();
+    const input = document.getElementById('noteInput');
+    const text = input.value.trim();
+    if (!text) return;
+    const month = monthKeyOf(recordMonth);
+    // 今月なら今日の日付、過去の月にあとから書き足すならその月の1日として残す
+    const date = month === monthKeyOf(new Date()) ? toKey(new Date()) : `${month}-01`;
+    notes.push({ id: Date.now(), month, kind: document.getElementById('noteKind').value, text, date });
+    saveList(NOTES_KEY, notes);
+    input.value = '';
+    renderRecord();
+  };
+  document.getElementById('monthPrev').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() - 1); renderRecord(); };
+  document.getElementById('monthNext').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() + 1); renderRecord(); };
+
+  // ---- バックアップ ----
+  document.getElementById('exportBtn').onclick = async () => {
+    const backup = { app: 'to-do', version: 1, exportedAt: new Date().toISOString(), data, repeats, life, notes };
+    const name = `to-do-backup-${toKey(new Date())}.json`;
+    const file = new File([JSON.stringify(backup)], name, { type: 'application/json' });
+    // ホーム画面から開いた iPhone ではダウンロードが効かないことがあるので、共有シートを優先する
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file] }); } catch { /* キャンセル */ }
+      return;
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  document.getElementById('importBtn').onclick = () => document.getElementById('importFile').click();
+  document.getElementById('importFile').onchange = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    let backup;
+    try { backup = JSON.parse(await file.text()); } catch { backup = null; }
+    const valid = backup && backup.app === 'to-do'
+      && typeof backup.data === 'object' && !Array.isArray(backup.data)
+      && [backup.repeats, backup.life, backup.notes].every(Array.isArray);
+    if (!valid) { alert('このアプリのバックアップファイルではないようです'); return; }
+    if (!confirm('今このスマホにある記録は、ファイルの中身で置き換わります。読み込みますか？')) return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(backup.data));
+    localStorage.setItem(REPEAT_KEY, JSON.stringify(backup.repeats));
+    localStorage.setItem(LIFE_KEY, JSON.stringify(backup.life));
+    localStorage.setItem(NOTES_KEY, JSON.stringify(backup.notes));
+    location.reload();
+  };
 
   render();
 </script>
