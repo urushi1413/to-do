@@ -76,6 +76,8 @@
   h2 b { color:var(--fg); }
   h3 { font-size:13px; margin:16px 0 4px; }
   li small.when { font-size:11px; color:var(--muted); white-space:nowrap; }
+  .note-date { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); margin:-4px 0 4px; }
+  .note-date input { font:inherit; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
   .backup { display:flex; gap:8px; }
   .backup button { flex:1; padding:8px 0; }
   .hint { font-size:12px; color:var(--muted); margin:8px 0 0; }
@@ -168,6 +170,7 @@
         </select>
         <button type="submit">追加</button>
       </form>
+      <label class="note-date">日付 <input type="date" id="noteDate"></label>
       <h3>達成したこと</h3>
       <ul id="achievedList"></ul>
       <h3>成長したこと</h3>
@@ -633,6 +636,15 @@
     // 月の記録：手で書いたメモに、その月に達成した人生リストの項目を自動で足す
     const month = monthKeyOf(recordMonth);
     document.getElementById('monthLabel').textContent = `${recordMonth.getFullYear()}年${recordMonth.getMonth() + 1}月`;
+    // 日付はその月の中でだけ選べる。今月なら今日、過去の月ならその月の最終日を最初に入れておく
+    const dateInput = document.getElementById('noteDate');
+    const first = `${month}-01`;
+    const last = toKey(new Date(recordMonth.getFullYear(), recordMonth.getMonth() + 1, 0));
+    if (dateInput.min !== first) {
+      dateInput.min = first;
+      dateInput.max = last;
+      dateInput.value = month === monthKeyOf(new Date()) ? toKey(new Date()) : last;
+    }
     const lists = { achieved: document.getElementById('achievedList'), grown: document.getElementById('grownList') };
     for (const kind of ['achieved', 'grown']) {
       const ul = lists[kind];
@@ -681,8 +693,8 @@
     const text = input.value.trim();
     if (!text) return;
     const month = monthKeyOf(recordMonth);
-    // 今月なら今日の日付、過去の月にあとから書き足すならその月の1日として残す
-    const date = month === monthKeyOf(new Date()) ? toKey(new Date()) : `${month}-01`;
+    const picked = document.getElementById('noteDate').value;
+    const date = picked && picked.startsWith(month) ? picked : document.getElementById('noteDate').min;
     notes.push({ id: Date.now(), month, kind: document.getElementById('noteKind').value, text, date });
     saveList(NOTES_KEY, notes);
     input.value = '';
