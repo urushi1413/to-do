@@ -111,6 +111,16 @@
   .toast { position:fixed; left:50%; bottom:calc(76px + env(safe-area-inset-bottom)); transform:translate(-50%, 20px); width:max-content; max-width:90vw; background:#222; color:#fff; padding:10px 16px; border-radius:20px; font-size:14px; opacity:0; transition:opacity .2s, transform .2s; pointer-events:none; z-index:10; }
   .toast.show { opacity:1; transform:translate(-50%, 0); }
   #confetti { position:fixed; inset:0; pointer-events:none; z-index:9; }
+  .month-btn { border:none; background:none; color:var(--fg); font-size:18px; font-weight:bold; padding:4px 8px; }
+  .month-btn::after { content:' ▾'; font-size:12px; color:var(--muted); }
+  .month-picker { margin-top:12px; padding:12px; border:1px solid var(--line); border-radius:8px; }
+  .month-grid { display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; margin-top:8px; }
+  .month-grid button { position:relative; padding:10px 0; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
+  .month-grid button.now { border-color:var(--accent); }
+  .month-grid button.on { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:bold; }
+  .month-grid button:disabled { color:var(--line); }
+  .month-grid button.marked::after { content:''; position:absolute; left:50%; bottom:3px; width:4px; height:4px; margin-left:-2px; border-radius:50%; background:var(--accent); }
+  .month-grid button.on.marked::after { background:#fff; }
 </style>
 </head>
 <body>
@@ -210,8 +220,16 @@
     <section>
       <div class="nav">
         <button id="monthPrev">←</button>
-        <strong id="monthLabel"></strong>
+        <button class="month-btn" id="monthLabel"></button>
         <button id="monthNext">→</button>
+      </div>
+      <div class="month-picker" id="monthPicker" hidden>
+        <div class="nav">
+          <button id="pickerPrev">‹</button>
+          <strong id="pickerYear"></strong>
+          <button id="pickerNext">›</button>
+        </div>
+        <div class="month-grid" id="monthGrid"></div>
       </div>
       <form class="row-form" id="noteForm" style="margin-top:12px">
         <input id="noteInput" placeholder="この月のできごと" autocomplete="off">
@@ -766,8 +784,43 @@
     input.value = '';
     renderRecord();
   };
-  document.getElementById('monthPrev').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() - 1); renderRecord(); };
-  document.getElementById('monthNext').onclick = () => { recordMonth.setMonth(recordMonth.getMonth() + 1); renderRecord(); };
+  // 来月以降は書くことが無いので、今月より先には進めない
+  function setRecordMonth(d) {
+    const now = appNow();
+    recordMonth = monthKeyOf(d) > monthKeyOf(now) ? new Date(now.getFullYear(), now.getMonth(), 1) : new Date(d.getFullYear(), d.getMonth(), 1);
+    document.getElementById('monthPicker').hidden = true;
+    renderRecord();
+  }
+  document.getElementById('monthPrev').onclick = () => setRecordMonth(new Date(recordMonth.getFullYear(), recordMonth.getMonth() - 1, 1));
+  document.getElementById('monthNext').onclick = () => setRecordMonth(new Date(recordMonth.getFullYear(), recordMonth.getMonth() + 1, 1));
+
+  // 月の名前をタップすると、年ごとに12か月を並べた表から選べる
+  let pickerYear;
+  function renderMonthPicker() {
+    const now = appNow();
+    const marked = new Set([...notes.map(n => n.month), ...life.filter(x => x.doneOn).map(x => x.doneOn.slice(0, 7))]);
+    document.getElementById('pickerYear').textContent = `${pickerYear}年`;
+    document.getElementById('pickerNext').disabled = pickerYear >= now.getFullYear();
+    const grid = document.getElementById('monthGrid');
+    grid.innerHTML = '';
+    for (let m = 0; m < 12; m++) {
+      const d = new Date(pickerYear, m, 1);
+      const key = monthKeyOf(d);
+      const b = document.createElement('button');
+      b.textContent = `${m + 1}月`;
+      b.className = [key === monthKeyOf(recordMonth) && 'on', key === monthKeyOf(now) && 'now', marked.has(key) && 'marked'].filter(Boolean).join(' ');
+      b.disabled = key > monthKeyOf(now);
+      b.onclick = () => setRecordMonth(d);
+      grid.append(b);
+    }
+  }
+  document.getElementById('monthLabel').onclick = () => {
+    const picker = document.getElementById('monthPicker');
+    picker.hidden = !picker.hidden;
+    if (!picker.hidden) { pickerYear = recordMonth.getFullYear(); renderMonthPicker(); }
+  };
+  document.getElementById('pickerPrev').onclick = () => { pickerYear--; renderMonthPicker(); };
+  document.getElementById('pickerNext').onclick = () => { pickerYear++; renderMonthPicker(); };
 
   // ---- バックアップ ----
   function loadBackupState() {
