@@ -29,7 +29,9 @@
   #taskInput { flex:1; min-width:0; padding:8px; font:inherit; border:1px solid var(--line); border-radius:6px; }
   ul { list-style:none; margin:0; padding:0; }
   li { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
-  li label { flex:1; display:flex; align-items:center; gap:8px; }
+  li label { flex:1; min-width:0; display:flex; align-items:center; gap:8px; }
+  li input[type=checkbox] { flex:none; width:22px; height:22px; margin:0; accent-color:var(--accent); }
+  li input.edit { flex:1; min-width:0; padding:4px 6px; font:inherit; border:1px solid var(--accent); border-radius:6px; }
   li.done span { text-decoration:line-through; color:var(--muted); }
   .tag { font-size:11px; color:var(--accent); border:1px solid var(--accent); border-radius:4px; padding:0 4px; margin-left:4px; }
   #repeatInput { font:inherit; padding:0 4px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); }
@@ -463,6 +465,12 @@
       };
       const span = document.createElement('span');
       span.textContent = task.text;
+      // 文字をタップすると書き換えられる。繰り返しタスクは名前を変えると過去の日の表示も変わる
+      makeEditable(span, task.text, text => {
+        if (task.repeat) { task.repeat.text = text; saveRepeats(); }
+        else { task.text = text; save(); }
+        render();
+      });
       label.append(cb, span);
       if (task.repeat) {
         const tag = document.createElement('small');
@@ -697,8 +705,34 @@
     return `${y}/${m}/${d}`;
   }
 
+  // span をタップすると、その場で入力欄に変わる。Enter か欄の外をタップで保存、空にしたら元に戻す
+  function makeEditable(span, text, onSave) {
+    span.onclick = e => {
+      e.preventDefault();  // label の中なので、そのままだとチェックが切り替わってしまう
+      const input = document.createElement('input');
+      input.className = 'edit';
+      input.value = text;
+      let done = false;
+      const finish = save => {
+        if (done) return;
+        done = true;
+        const value = input.value.trim();
+        if (save && value && value !== text) onSave(value);
+        else input.replaceWith(span);
+      };
+      input.onkeydown = ev => {
+        if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+        if (ev.key === 'Escape') finish(false);
+      };
+      input.onblur = () => finish(true);
+      input.onclick = ev => ev.preventDefault();
+      span.replaceWith(input);
+      input.focus();
+    };
+  }
+
   // 1行ぶんの li を作る。onToggle を渡すとチェックボックスが付く
-  function recordItem({ text, done, when, tagText, onToggle, onDelete }) {
+  function recordItem({ text, done, when, tagText, onToggle, onEdit, onDelete }) {
     const li = document.createElement('li');
     li.className = done ? 'done' : '';
     const label = document.createElement('label');
@@ -711,6 +745,7 @@
     }
     const span = document.createElement('span');
     span.textContent = text;
+    if (onEdit) makeEditable(span, text, onEdit);
     label.append(span);
     if (tagText) {
       const tag = document.createElement('small');
@@ -753,6 +788,7 @@
           item.doneOn = checked ? toKey(appNow()) : null;
           saveList(LIFE_KEY, life); renderRecord();
         },
+        onEdit: text => { item.text = text; saveList(LIFE_KEY, life); renderRecord(); },
         onDelete: () => {
           if (!confirm(`「${item.text}」を人生リストから消しますか？`)) return;
           life.splice(life.indexOf(item), 1);
@@ -780,6 +816,7 @@
       .map(n => ({ date: n.date, li: recordItem({
         text: n.text,
         when: formatKey(n.date).slice(5),
+        onEdit: text => { n.text = text; saveList(NOTES_KEY, notes); renderRecord(); },
         onDelete: () => {
           if (!confirm(`「${n.text}」を消しますか？`)) return;
           notes.splice(notes.indexOf(n), 1);
