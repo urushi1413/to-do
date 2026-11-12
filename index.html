@@ -130,6 +130,11 @@
   .wheel::-webkit-scrollbar { display:none; }
   .wheel div { height:36px; line-height:36px; text-align:center; font-size:20px; scroll-snap-align:center; }
   .wheel div.off { color:var(--line); }
+  .choose-title { margin:0; padding:16px; text-align:center; font-size:13px; color:var(--muted); border-bottom:1px solid var(--line); }
+  #chooseOptions button, .choose-cancel { display:block; width:100%; padding:12px 16px; border:none; border-bottom:1px solid var(--line); background:none; color:var(--fg); text-align:center; }
+  #chooseOptions button b { display:block; font-size:16px; color:var(--accent); }
+  #chooseOptions button small { display:block; font-size:12px; color:var(--muted); margin-top:2px; }
+  .choose-cancel { border-bottom:none; font-weight:bold; }
   .wheel-sep { align-self:center; z-index:1; font-size:20px; color:var(--muted); }
   .summary-bg { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; padding:16px; }
   .summary-card { width:100%; max-width:400px; max-height:85vh; overflow-y:auto; background:var(--card); border-radius:12px; padding:20px; }
@@ -275,6 +280,13 @@
     <button class="close" id="summaryClose">閉じる</button>
   </div>
 </div>
+<div class="sheet-bg" id="chooseSheet" hidden>
+  <div class="sheet">
+    <p class="choose-title" id="chooseTitle"></p>
+    <div id="chooseOptions"></div>
+    <button class="choose-cancel" id="chooseCancel">キャンセル</button>
+  </div>
+</div>
 <div class="sheet-bg" id="monthSheet" hidden>
   <div class="sheet">
     <div class="sheet-head">
@@ -371,8 +383,7 @@
     return r.days ? '毎週 ' + r.days.map(d => WEEKDAYS[d]).join('・') : '毎日';
   }
   function repeatsOf(key) {
-    const wd = weekdayOf(key);
-    return repeats.filter(r => r.from <= key && (!r.until || key < r.until) && (!r.days || r.days.includes(wd)));
+    return repeats.filter(r => scheduled(r, key));
   }
   function tasksOf(key) {
     const daily = repeatsOf(key).map(r => ({ id: r.id, text: r.text, done: !!r.done[key], repeat: r }));
@@ -483,9 +494,17 @@
       del.textContent = '×';
       del.onclick = () => {
         if (task.repeat) {
-          if (!confirm(`「${task.text}」の繰り返しをこの日からやめますか？（前の日の記録は残ります）`)) return;
-          task.repeat.until = key;
-          saveRepeats(); render();
+          choose(`「${task.text}」をどうしますか？`, [
+            ['この日だけ消す', '達成率にも連続にも数えません', () => {
+              task.repeat.skip = { ...task.repeat.skip, [key]: true };
+              delete task.repeat.done[key];
+              saveRepeats(); render();
+            }],
+            ['この日以降やめる', '前の日までの記録は残ります', () => {
+              task.repeat.until = key;
+              saveRepeats(); render();
+            }],
+          ]);
           return;
         }
         data[key] = (data[key] || []).filter(t => t.id !== task.id);
@@ -579,8 +598,10 @@
   }
 
   // その繰り返しタスクが key の日に予定されていたか
+  // skip は「この日だけ消す」にした日。予定に無い日と同じ扱いになり、達成率にも連続にも数えない
   function scheduled(r, key) {
-    return r.from <= key && (!r.until || key < r.until) && (!r.days || r.days.includes(weekdayOf(key)));
+    return r.from <= key && (!r.until || key < r.until) && (!r.days || r.days.includes(weekdayOf(key)))
+      && !(r.skip && r.skip[key]);
   }
 
   // 今日から遡って何日連続で達成しているか。今日がまだ未チェックなら昨日から数える
@@ -1188,6 +1209,27 @@
   document.getElementById('badgeBack').onclick = () => {
     document.getElementById('badgeView').hidden = true;
     document.getElementById('statsView').hidden = false;
+  };
+
+  // 画面下から選択肢を出す。options は [見出し, 補足, 選んだときの処理] の配列
+  function choose(title, options) {
+    const sheet = document.getElementById('chooseSheet');
+    document.getElementById('chooseTitle').textContent = title;
+    const box = document.getElementById('chooseOptions');
+    box.innerHTML = '';
+    for (const [label, note, action] of options) {
+      const b = document.createElement('button');
+      b.innerHTML = '<b></b><small></small>';
+      b.querySelector('b').textContent = label;
+      b.querySelector('small').textContent = note;
+      b.onclick = () => { sheet.hidden = true; action(); };
+      box.append(b);
+    }
+    sheet.hidden = false;
+  }
+  document.getElementById('chooseCancel').onclick = () => { document.getElementById('chooseSheet').hidden = true; };
+  document.getElementById('chooseSheet').onclick = e => {
+    if (e.target.id === 'chooseSheet') e.target.hidden = true;
   };
 
   let toastTimer;
